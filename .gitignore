@@ -1,0 +1,7 @@
+# Archivos sensibles y entornos virtuales
+.env
+.venv/
+.venv_rag/
+__pycache__/
+*.pyc
+frontend-riesgos/ 
