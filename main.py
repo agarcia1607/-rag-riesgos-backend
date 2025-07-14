@@ -3,10 +3,29 @@ from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from query_wrapper import ChatbotRiesgos
+from fastapi.middleware.cors import CORSMiddleware
+
+
+
+
+
+
+
 
 # Crear app
 app = FastAPI()
 chatbot = ChatbotRiesgos()
+
+
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],          # o ['https://rag-riesgos.vercel.app']
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # CORS (para frontend React)
 app.add_middleware(
