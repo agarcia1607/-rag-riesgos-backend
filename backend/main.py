@@ -14,6 +14,15 @@ from backend.baseline_rag import BaselineRAG
 
 app = FastAPI()
 
+
+
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
