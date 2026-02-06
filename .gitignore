@@ -1,7 +1,30 @@
-# Archivos sensibles y entornos virtuales
+# Secrets
 .env
-.venv/
-.venv_rag/
+.env.off
+
+# Python
 __pycache__/
 *.pyc
-frontend-riesgos/ 
+*.pkl
+
+# Virtual envs
+.venv/
+.venv_rag/
+
+# Node
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Vector DB / artifacts
+chroma_db_riesgos/
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+frontend/build/
+

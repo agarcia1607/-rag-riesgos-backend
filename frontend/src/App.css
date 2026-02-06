@@ -1,0 +1,273 @@
+:root{
+  --bg:#0b0f17;
+  --panel:rgba(255,255,255,0.06);
+  --border:rgba(255,255,255,0.12);
+  --text:rgba(255,255,255,0.92);
+  --muted:rgba(255,255,255,0.62);
+  --shadow:0 12px 36px rgba(0,0,0,0.45);
+  --radius:16px;
+}
+
+*{ box-sizing:border-box; }
+
+body{
+  margin:0;
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;
+  background:
+    radial-gradient(1200px 700px at 30% 0%, rgba(97,218,251,0.18), transparent 55%),
+    radial-gradient(1000px 650px at 80% 20%, rgba(167,139,250,0.14), transparent 55%),
+    var(--bg);
+  color:var(--text);
+}
+
+.page{
+  min-height:100vh;
+  padding:28px;
+  display:flex;
+  justify-content:center;
+}
+
+.shell{
+  width:min(1100px,100%);
+}
+
+.header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom:18px;
+}
+
+.brand{
+  display:flex;
+  gap:12px;
+  align-items:center;
+}
+
+.logo{
+  width:44px;
+  height:44px;
+  display:grid;
+  place-items:center;
+  border-radius:14px;
+  background:var(--panel);
+  border:1px solid var(--border);
+  box-shadow:var(--shadow);
+}
+
+h1{
+  margin:0;
+  font-size:20px;
+  letter-spacing:0.2px;
+}
+
+.header p{
+  margin:0;
+  color:var(--muted);
+  font-size:13px;
+}
+
+.badge{
+  padding:8px 12px;
+  border-radius:999px;
+  font-size:13px;
+  border:1px solid var(--border);
+  background:var(--panel);
+}
+
+.badge--ok{
+  background:rgba(34,197,94,0.12);
+  border-color:rgba(34,197,94,0.35);
+}
+
+.badge--warn{
+  background:rgba(245,158,11,0.12);
+  border-color:rgba(245,158,11,0.35);
+}
+
+.badge--neutral{
+  background:var(--panel);
+}
+
+.grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:16px;
+}
+
+@media (max-width:900px){
+  .grid{ grid-template-columns:1fr; }
+}
+
+.card{
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  padding:16px;
+}
+
+.card__title{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:10px;
+}
+
+.card__title h2{
+  margin:0;
+  font-size:15px;
+  font-weight:700;
+  opacity:0.95;
+}
+
+.hint{
+  font-size:12px;
+  color:var(--muted);
+}
+
+.input{
+  width:100%;
+  border-radius:14px;
+  border:1px solid var(--border);
+  background:rgba(0,0,0,0.28);
+  color:var(--text);
+  padding:12px;
+  resize:vertical;
+  outline:none;
+}
+
+.input:focus{
+  border-color:rgba(97,218,251,0.5);
+  box-shadow:0 0 0 3px rgba(97,218,251,0.12);
+}
+
+.actions{
+  display:flex;
+  gap:10px;
+  margin-top:12px;
+}
+
+.btn{
+  border-radius:12px;
+  border:1px solid var(--border);
+  background:rgba(255,255,255,0.06);
+  color:var(--text);
+  padding:10px 12px;
+  cursor:pointer;
+  font-weight:600;
+}
+
+.btn:hover{ background:rgba(255,255,255,0.09); }
+
+.btn:disabled{ opacity:0.6; cursor:not-allowed; }
+
+.btn--primary{
+  background:rgba(97,218,251,0.16);
+  border-color:rgba(97,218,251,0.35);
+}
+
+.btn--primary:hover{ background:rgba(97,218,251,0.22); }
+
+.meta{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-top:14px;
+  color:var(--muted);
+  font-size:12px;
+}
+
+.dot{
+  width:8px;
+  height:8px;
+  border-radius:999px;
+  background:rgba(34,197,94,0.9);
+}
+
+.link{
+  background:transparent;
+  border:none;
+  color:rgba(97,218,251,0.95);
+  cursor:pointer;
+  font-weight:700;
+  font-size:12px;
+}
+
+.link:hover{ text-decoration:underline; }
+
+.alert{
+  border:1px solid rgba(239,68,68,0.35);
+  background:rgba(239,68,68,0.12);
+  padding:10px 12px;
+  border-radius:12px;
+  font-size:13px;
+}
+
+.empty{
+  color:var(--muted);
+  font-size:13px;
+  padding:6px 2px;
+}
+
+.chips{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:10px;
+}
+
+.chip{
+  border-radius:999px;
+  padding:8px 10px;
+  border:1px solid var(--border);
+  background:rgba(255,255,255,0.05);
+  color:var(--text);
+  cursor:pointer;
+  font-size:12px;
+}
+
+.chip:hover{ background:rgba(255,255,255,0.09); }
+
+.answer pre{
+  margin:0;
+  white-space:pre-wrap;
+  line-height:1.55;
+  font-family:inherit;
+  font-size:13.5px;
+}
+
+.sources{
+  margin-top:12px;
+}
+
+.sources pre{
+  white-space:pre-wrap;
+  font-size:12.5px;
+  line-height:1.45;
+  margin:10px 0 0 0;
+  color:rgba(255,255,255,0.85);
+}
+
+details{
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:10px 12px;
+  background:rgba(0,0,0,0.22);
+}
+
+summary{
+  cursor:pointer;
+  font-weight:700;
+  font-size:12.5px;
+  color:rgba(255,255,255,0.9);
+}
+
+.footer{
+  margin-top:14px;
+  color:var(--muted);
+  font-size:12px;
+  text-align:center;
+}
