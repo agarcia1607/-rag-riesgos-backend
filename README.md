@@ -1,4 +1,4 @@
-# 🎯 RAG de Análisis de Riesgos
+#  RAG de Análisis de Riesgos
 
 Sistema de consulta inteligente sobre documentos de riesgos usando arquitectura **Retrieval-Augmented Generation (RAG)** con enfoque baseline-first, robusto y reproducible.
 
@@ -22,40 +22,40 @@ Diseñado para funcionar **sin dependencias de modelos generativos** y escalar o
 
 ---
 
-## 🎯 Objetivo
+##  Objetivo
 
 Permitir consultas en lenguaje natural sobre documentos de riesgos (PDFs), entregando:
 
-- ✅ **Respuestas claras y justificadas** con contexto relevante
-- 📄 **Evidencia textual explícita** con referencias a fuentes
-- 🛡️ **Comportamiento estable** incluso ante fallos de APIs externas
-- 🔍 **Trazabilidad completa** de cada respuesta generada
+-  **Respuestas claras y justificadas** con contexto relevante
+-  **Evidencia textual explícita** con referencias a fuentes
+-  **Comportamiento estable** incluso ante fallos de APIs externas
+-  **Trazabilidad completa** de cada respuesta generada
 
 Este proyecto prioriza **ingeniería de sistemas de IA en producción**, no solo experimentación.
 
 ---
 
-## ⭐ Características Principales
+##  Características Principales
 
-### 🏗️ Arquitectura Resiliente
+###  Arquitectura Resiliente
 - **Modo Baseline** (predeterminado): BM25 + extracción extractiva sin uso de tokens
 - **Modo LLM** (opcional): Gemini + embeddings semánticos con fallback automático
 - **Degradación elegante**: Si LLM falla, el sistema continúa funcionando en modo baseline
 
-### 🔒 Producción-Ready
+###  Producción-Ready
 - Zero downtime por cuotas de API
 - Respuestas determinísticas y reproducibles
 - Logging estructurado y métricas de rendimiento
 - Manejo robusto de errores
 
-### 📊 Transparencia
+###  Transparencia
 - Fuentes citadas explícitamente
 - Scores de relevancia por fragmento
 - Metadata de cada respuesta (modo usado, latencia, chunks recuperados)
 
 ---
 
-## 🧠 Arquitectura
+##  Arquitectura
 ```
 ┌─────────┐     ┌─────────┐     ┌──────────┐     ┌─────┐     ┌──────────┐
 │  PDFs   │ ──▶ │ Ingesta │ ──▶ │ Indexing │ ──▶ │ RAG │ ──▶ │ Frontend │
@@ -78,7 +78,7 @@ Este proyecto prioriza **ingeniería de sistemas de IA en producción**, no solo
 
 ---
 
-## 🗂️ Estructura del Proyecto
+##  Estructura del Proyecto
 ```
 RAG_riesgos/
 │
@@ -117,7 +117,7 @@ RAG_riesgos/
 
 ---
 
-## 🚀 Instalación
+##  Instalación
 
 ### Prerrequisitos
 
@@ -151,7 +151,7 @@ npm install
 
 ---
 
-## ⚙️ Configuración
+##  Configuración
 
 ### Variables de Entorno (`.env`)
 ```bash
@@ -176,7 +176,7 @@ FRONTEND_PORT=3000
 
 ---
 
-## 🎮 Uso
+##  Uso
 
 ### Iniciar Backend
 ```bash
@@ -214,9 +214,9 @@ docker-compose down
 
 ---
 
-## 🔧 Modos de Operación
+##  Modos de Operación
 
-### 1️⃣ Modo Baseline (Predeterminado)
+###  Modo Baseline (Predeterminado)
 
 **Características:**
 - Búsqueda léxica con BM25
@@ -236,7 +236,7 @@ docker-compose down
 export RAG_MODE=baseline
 ```
 
-### 2️⃣ Modo LLM (Opcional)
+###  Modo LLM (Opcional)
 
 **Características:**
 - Embeddings semánticos (Google Gemini)
@@ -268,7 +268,7 @@ LLM Request
 
 ---
 
-## 📡 API Reference
+##  API Reference
 
 ### `POST /query`
 
@@ -329,40 +329,40 @@ Verifica estado del sistema.
 
 ---
 
-## 🎯 Roadmap
+##  Roadmap
 
-### ✅ Completado
-- [x] Sistema RAG baseline funcional
-- [x] API REST con FastAPI
-- [x] Frontend React
-- [x] Modo LLM con fallback
-- [x] Documentación completa
+###  Completado
+-  Sistema RAG baseline funcional
+-  API REST con FastAPI
+-  Frontend React
+-  Modo LLM con fallback
+-  Documentación completa
 
-### 🚧 En Progreso
-- [ ] Dockerización completa
-- [ ] Tests de integración (>80% coverage)
-- [ ] CI/CD pipeline
+###  En Progreso
+-  Dockerización completa
+-  Tests de integración (>80% coverage)
+-  CI/CD pipeline
 
-### 📅 Futuro
-- [ ] Soporte multi-documento (colecciones)
-- [ ] Sistema de evaluación automática (RAGAS)
-- [ ] Panel administrativo
-- [ ] Autenticación y permisos
-- [ ] Caché de consultas frecuentes
-- [ ] Soporte para más formatos (DOCX, TXT, HTML)
-- [ ] Integración con S3 para almacenamiento
-- [ ] Métricas y observabilidad (Prometheus + Grafana)
+###  Futuro
+-  Soporte multi-documento (colecciones)
+-  Sistema de evaluación automática (RAGAS)
+-  Panel administrativo
+-  Autenticación y permisos
+-  Caché de consultas frecuentes
+-  Soporte para más formatos (DOCX, TXT, HTML)
+-  Integración con S3 para almacenamiento
+-  Métricas y observabilidad (Prometheus + Grafana)
 
 ---
 
 
-## 📄 Licencia
+##  Licencia
 
 [MIT](LICENSE)
 
 ---
 
-## 🤝 Contribución
+##  Contribución
 
 Pull requests bienvenidos. Para cambios mayores, por favor abrir un issue primero.
 ```bash
