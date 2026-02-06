@@ -328,6 +328,120 @@ Verifica estado del sistema.
 ```
 
 ---
+##  Testing
+
+El proyecto incluye una **suite de tests con `pytest`** diseñada para validar el comportamiento del sistema **antes de dockerizar o desplegar**, priorizando **robustez, contrato y reproducibilidad**, y evitando overengineering.
+
+El enfoque de testing es **baseline-first** y **LLM-agnóstico**, lo que permite validar el sistema sin depender de servicios externos.
+
+---
+
+###  Alcance de los tests
+
+La suite cubre los siguientes componentes críticos:
+
+####  Healthcheck
+
+* Verifica que el backend levanta correctamente.
+* Endpoint probado: `GET /health`.
+* Usado como señal de vida para Docker y CI/CD.
+
+####  Contrato del endpoint principal
+
+* Valida que `POST /preguntar` **siempre** devuelve el contrato esperado:
+
+```json
+{
+  "respuesta": "string",
+  "fuentes": ["string", "..."]
+}
+```
+
+* Blindaje para frontend, clientes externos y futuros refactors.
+
+####  Modo Baseline
+
+* Fuerza `RAG_MODE=baseline`.
+* Verifica:
+
+  * Respuestas válidas cuando hay evidencia.
+  * Respuesta estándar y `fuentes = []` cuando no se encuentran fragmentos relevantes.
+* Garantiza comportamiento determinístico y reproducible.
+
+####  Fallback automático (LLM → Baseline)
+
+* Fuerza `RAG_MODE=llm`.
+* Valida que, ante errores del LLM (cuotas, red, API), el sistema:
+
+  * **no se cae**.
+  * retorna una respuesta válida usando el baseline.
+* Asegura resiliencia en producción.
+
+####  Estabilidad y latencia
+
+* Ejecuta múltiples requests consecutivas.
+* Verifica:
+
+  * consistencia de respuestas.
+  * latencia total bajo un umbral razonable.
+* Previene degradaciones silenciosas de rendimiento.
+
+####  Carga y chunking del PDF
+
+* Test de integración para la función de ingesta (`cargar_pdf`).
+* Verifica que:
+
+  * el PDF existe.
+  * se puede cargar correctamente.
+  * el proceso de chunking produce **texto útil no vacío**, independientemente de la estructura interna de los chunks.
+
+---
+
+###  Estructura de tests
+
+```text
+tests/
+├── conftest.py
+├── test_health.py
+├── test_contract.py
+├── test_baseline.py
+├── test_fallback.py
+├── test_stability.py
+└── test_pdf_loader.py
+```
+
+---
+
+###  Ejecutar los tests
+
+Con el entorno virtual activado:
+
+```bash
+python -m pytest -q
+```
+
+Todos los tests están pensados para:
+
+* ejecutarse rápidamente.
+* no depender de servicios externos.
+* ser reproducibles (baseline por defecto).
+
+---
+
+###  Filosofía de testing
+
+* Se testea **comportamiento**, no implementación interna.
+* Se prioriza:
+
+  * estabilidad.
+  * contrato.
+  * resiliencia.
+  * reproducibilidad.
+* Los tests relacionados con LLMs son **indirectos** (fallback), evitando dependencias frágiles de APIs externas.
+
+
+
+
 
 ##  Roadmap
 
@@ -338,10 +452,19 @@ Verifica estado del sistema.
 -  Modo LLM con fallback
 -  Documentación completa
 
+
+
+
+
+
 ###  En Progreso
 -  Dockerización completa
 -  Tests de integración (>80% coverage)
 -  CI/CD pipeline
+
+
+
+
 
 ###  Futuro
 -  Soporte multi-documento (colecciones)
@@ -354,6 +477,11 @@ Verifica estado del sistema.
 -  Métricas y observabilidad (Prometheus + Grafana)
 
 ---
+
+
+
+
+
 
 
 ##  Licencia
