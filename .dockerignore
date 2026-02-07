@@ -1,0 +1,8 @@
+node_modules
+build
+dist
+.git
+Dockerfile
+npm-debug.log
+yarn.lock
+pnpm-lock.yaml
