@@ -1,5 +1,19 @@
 ﻿from pathlib import Path
 from backend.Pdf_loader import cargar_pdf
+import pytest
+from pathlib import Path
+
+pdf_path = Path("data") / "Doc chatbot.pdf"
+
+pytestmark = pytest.mark.skipif(
+    not pdf_path.exists(),
+    reason="PDF not available (skipping integration-style test)."
+)
+
+
+
+
+
 
 def _extract_text(chunk):
     # LangChain Document: .page_content
