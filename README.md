@@ -1,24 +1,27 @@
-#  RAG de Análisis de Riesgos
+# RAG de Análisis de Riesgos
 
-Sistema de consulta inteligente sobre documentos de riesgos usando arquitectura **Retrieval-Augmented Generation (RAG)** con enfoque baseline-first, robusto y reproducible.
+Sistema de consulta inteligente sobre documentos de riesgos usando arquitectura **Retrieval‑Augmented Generation (RAG)** con enfoque **baseline‑first**, robusto y reproducible.
 
 Diseñado para funcionar **sin dependencias de modelos generativos** y escalar opcionalmente a LLMs, manteniendo control, trazabilidad y estabilidad en producción.
 
 ---
 
-## 📋 Tabla de Contenidos
+##  Tabla de Contenidos
 
-- [Objetivo](#-objetivo)
-- [Características Principales](#-características-principales)
-- [Arquitectura](#-arquitectura)
-- [Estructura del Proyecto](#-estructura-del-proyecto)
-- [Instalación](#-instalación)
-- [Configuración](#-configuración)
-- [Uso](#-uso)
-- [Modos de Operación](#-modos-de-operación)
-- [API Reference](#-api-reference)
-- [Roadmap](#-roadmap)
-- [Contribución](#-contribución)
+* [Objetivo](#-objetivo)
+* [Características Principales](#-características-principales)
+* [Arquitectura](#-arquitectura)
+* [Estructura del Proyecto](#-estructura-del-proyecto)
+* [Quick Start (Docker)](#-quick-start-docker)
+* [Instalación](#-instalación)
+* [Configuración](#-configuración)
+* [Uso](#-uso)
+* [Modos de Operación](#-modos-de-operación)
+* [API Reference](#-api-reference)
+* [Testing](#-testing)
+* [Roadmap](#-roadmap)
+* [Licencia](#-licencia)
+* [Contribución](#-contribución)
 
 ---
 
@@ -26,36 +29,42 @@ Diseñado para funcionar **sin dependencias de modelos generativos** y escalar o
 
 Permitir consultas en lenguaje natural sobre documentos de riesgos (PDFs), entregando:
 
--  **Respuestas claras y justificadas** con contexto relevante
--  **Evidencia textual explícita** con referencias a fuentes
--  **Comportamiento estable** incluso ante fallos de APIs externas
--  **Trazabilidad completa** de cada respuesta generada
+* **Respuestas claras y justificadas** con contexto relevante
+* **Evidencia textual explícita** con referencias a fuentes
+* **Comportamiento estable** incluso ante fallos de APIs externas
+* **Trazabilidad completa** de cada respuesta generada
 
 Este proyecto prioriza **ingeniería de sistemas de IA en producción**, no solo experimentación.
+
+> **Filosofía de diseño**: control, reproducibilidad y degradación segura antes que dependencia de modelos externos.
 
 ---
 
 ##  Características Principales
 
 ###  Arquitectura Resiliente
-- **Modo Baseline** (predeterminado): BM25 + extracción extractiva sin uso de tokens
-- **Modo LLM** (opcional): Gemini + embeddings semánticos con fallback automático
-- **Degradación elegante**: Si LLM falla, el sistema continúa funcionando en modo baseline
 
-###  Producción-Ready
-- Zero downtime por cuotas de API
-- Respuestas determinísticas y reproducibles
-- Logging estructurado y métricas de rendimiento
-- Manejo robusto de errores
+* **Modo Baseline (default)**: BM25 + extracción extractiva (cero tokens)
+* **Modo LLM (opcional)**: embeddings + Gemini con fallback automático
+* **Degradación elegante**: si el LLM falla, el sistema continúa en baseline
+
+###  Producción‑Ready
+
+* Zero downtime por cuotas de API
+* Respuestas determinísticas y reproducibles
+* Logging estructurado
+* Manejo robusto de errores
 
 ###  Transparencia
-- Fuentes citadas explícitamente
-- Scores de relevancia por fragmento
-- Metadata de cada respuesta (modo usado, latencia, chunks recuperados)
+
+* Fuentes citadas explícitamente
+* Scores de relevancia por fragmento
+* Metadata completa (modo usado, latencia, chunks recuperados)
 
 ---
 
 ##  Arquitectura
+
 ```
 ┌─────────┐     ┌─────────┐     ┌──────────┐     ┌─────┐     ┌──────────┐
 │  PDFs   │ ──▶ │ Ingesta │ ──▶ │ Indexing │ ──▶ │ RAG │ ──▶ │ Frontend │
@@ -70,50 +79,59 @@ Este proyecto prioriza **ingeniería de sistemas de IA en producción**, no solo
 
 ### Flujo de Consulta
 
-1. **Usuario** envía pregunta en lenguaje natural
-2. **Query Wrapper** determina modo (baseline/LLM)
-3. **Retriever** obtiene chunks relevantes (BM25 o vectorial)
-4. **Generator** produce respuesta (extractiva o generativa)
-5. **API** devuelve respuesta + fuentes + metadata
+1. Usuario envía pregunta en lenguaje natural
+2. Query Wrapper decide el modo (baseline / llm / auto)
+3. Retriever obtiene fragmentos relevantes
+4. Generator produce respuesta (extractiva o generativa)
+5. API devuelve respuesta + fuentes + metadata
 
 ---
 
 ##  Estructura del Proyecto
+
 ```
-RAG_riesgos/
+RAG_riegos/
 │
 ├── backend/
-│   ├── main.py                # FastAPI server + endpoints
-│   ├── query_wrapper.py       # Orquestador RAG (modo selector)
-│   ├── baseline_rag.py        # Motor extractivo (BM25)
-│   ├── baseline_store.py      # Índice BM25 + persistencia
-│   ├── Pdf_loader.py          # Procesamiento y chunking de PDFs
-│   ├── Vector_store.py        # Embeddings + ChromaDB (modo LLM)
-│   └── config.py              # Configuración centralizada
+│   ├── main.py
+│   ├── query_wrapper.py
+│   ├── baseline_rag.py
+│   ├── baseline_store.py
+│   ├── pdf_loader.py
+│   ├── vector_store.py
+│   └── config.py
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── components/
-│   │   │   ├── ChatInterface.jsx
-│   │   │   └── SourcesPanel.jsx
-│   │   ├── App.jsx
-│   │   └── index.js
+│   ├── public/
+│   ├── Dockerfile
 │   └── package.json
 │
 ├── data/
-│   └── Doc chatbot.pdf        # Documento(s) fuente
+│   └── documentos.pdf
 │
-├── chroma_db_riesgos/         # Vector DB (solo modo LLM)
-├── baseline_index/            # Índice BM25 persistido
+├── chroma_db_riesgos/
+├── baseline_index/
+├── tests/
 │
-├── tests/                     # Tests unitarios + integración
-├── .env.example
-├── .dockerignore
-├── Dockerfile
+├── Dockerfile.backend
 ├── docker-compose.yml
 ├── requirements.txt
+├── .env.example
 └── README.md
 ```
+
+---
+
+##  Quick Start (Docker)
+
+```bash
+docker compose up --build
+```
+
+* Backend: [http://localhost:8000](http://localhost:8000)
+* Frontend: [http://localhost:3000](http://localhost:3000)
+* Docs API: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ---
 
@@ -121,55 +139,37 @@ RAG_riesgos/
 
 ### Prerrequisitos
 
-- Python 3.11+
-- Node.js 18+ y npm
-- (Opcional) Docker y Docker Compose
+* Python 3.11+
+* Node.js 18+
+* Docker + Docker Compose (recomendado)
 
-### Backend
+### Backend (local)
+
 ```bash
-# Clonar repositorio
-git clone https://github.com/tu-usuario/RAG_riesgos.git
-cd RAG_riesgos
-
-# Crear entorno virtual
 python -m venv venv
-source venv/bin/activate  # En Windows: venv\Scripts\activate
-
-# Instalar dependencias
+source venv/bin/activate
 pip install -r requirements.txt
-
-# Configurar variables de entorno
 cp .env.example .env
-# Editar .env con tu configuración
 ```
 
-### Frontend
+### Frontend (local)
+
 ```bash
 cd frontend
 npm install
+npm start
 ```
 
 ---
 
 ##  Configuración
 
-### Variables de Entorno (`.env`)
-```bash
-# Modo de operación (baseline | llm)
+```env
 RAG_MODE=baseline
-
-# API Keys (solo para modo LLM)
-GOOGLE_API_KEY=tu_api_key_aqui
-
-# Configuración de chunking
+GOOGLE_API_KEY=opcional
 CHUNK_SIZE=500
 CHUNK_OVERLAP=50
-
-# Configuración de retrieval
 TOP_K=5
-MIN_SCORE=0.3
-
-# Configuración de servidor
 BACKEND_PORT=8000
 FRONTEND_PORT=3000
 ```
@@ -178,92 +178,40 @@ FRONTEND_PORT=3000
 
 ##  Uso
 
-### Iniciar Backend
-```bash
-# Desarrollo
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+### Backend
 
-# Producción
-uvicorn backend.main:app --workers 4 --host 0.0.0.0 --port 8000
+```bash
+uvicorn backend.main:app --reload
 ```
 
-La API estará disponible en:
-- **Aplicación**: `http://localhost:8000`
-- **Documentación interactiva**: `http://localhost:8000/docs`
-- **OpenAPI Schema**: `http://localhost:8000/openapi.json`
+### Frontend
 
-### Iniciar Frontend
 ```bash
-cd frontend
 npm start
-```
-
-Interfaz disponible en: `http://localhost:3000`
-
-### Docker (Recomendado para Producción)
-```bash
-# Construir y levantar servicios
-docker-compose up --build
-
-# Solo backend
-docker-compose up backend
-
-# Detener servicios
-docker-compose down
 ```
 
 ---
 
 ##  Modos de Operación
 
-###  Modo Baseline (Predeterminado)
+### Baseline (default)
 
-**Características:**
-- Búsqueda léxica con BM25
-- Extracción de frases relevantes
-- **Cero consumo de tokens**
-- Latencia < 100ms
-- 100% reproducible
+* BM25 + extracción textual
+* Latencia < 100ms
+* Determinístico y reproducible
 
-**Cuándo usar:**
-- Entornos de producción estables
-- Cumplimiento regulatorio estricto
-- Restricciones de presupuesto
-- Documentos técnicos/legales donde la cita exacta es crítica
-
-**Activación:**
 ```bash
 export RAG_MODE=baseline
 ```
 
-###  Modo LLM (Opcional)
+### LLM (opcional)
 
-**Características:**
-- Embeddings semánticos (Google Gemini)
-- Búsqueda vectorial con ChromaDB
-- Respuestas generativas contextuales
-- **Fallback automático** a baseline si hay errores
+* Embeddings + Gemini
+* Fallback automático
 
-**Cuándo usar:**
-- Consultas complejas que requieren síntesis
-- Usuarios no técnicos
-- Disponibilidad de presupuesto para APIs
-
-**Activación:**
 ```bash
 export RAG_MODE=llm
-export GOOGLE_API_KEY=tu_api_key
-```
-
-**Manejo de Errores:**
-```
-LLM Request
-    │
-    ├─ Success ──▶ Respuesta generativa
-    │
-    └─ Error (429/Quota/Network)
-            │
-            └──▶ Automatic Fallback ──▶ Baseline Response
+export GOOGLE_API_KEY=tu_key
 ```
 
 ---
@@ -272,9 +220,6 @@ LLM Request
 
 ### `POST /query`
 
-Procesa una consulta en lenguaje natural.
-
-**Request:**
 ```json
 {
   "question": "¿Cuáles son los riesgos de liquidez?",
@@ -282,224 +227,72 @@ Procesa una consulta en lenguaje natural.
 }
 ```
 
-**Response:**
-```json
-{
-  "answer": "Los riesgos de liquidez identificados son...",
-  "sources": [
-    {
-      "content": "Fragmento relevante del documento...",
-      "page": 5,
-      "score": 0.89,
-      "metadata": {"document": "Doc chatbot.pdf"}
-    }
-  ],
-  "metadata": {
-    "mode_used": "baseline",
-    "latency_ms": 87,
-    "chunks_retrieved": 5,
-    "fallback_triggered": false
-  }
-}
-```
-
-### `POST /ingest`
-
-Procesa nuevos documentos PDF.
-
-**Request:**
-```bash
-curl -X POST http://localhost:8000/ingest \
-  -F "file=@documento.pdf"
-```
-
 ### `GET /health`
 
-Verifica estado del sistema.
-
-**Response:**
 ```json
 {
   "status": "healthy",
-  "mode": "baseline",
-  "index_loaded": true,
-  "documents_count": 1
+  "mode": "baseline"
 }
 ```
 
 ---
+
 ##  Testing
 
-El proyecto incluye una **suite de tests con `pytest`** diseñada para validar el comportamiento del sistema **antes de dockerizar o desplegar**, priorizando **robustez, contrato y reproducibilidad**, y evitando overengineering.
+Suite con **pytest**, baseline‑first y LLM‑agnóstica.
 
-El enfoque de testing es **baseline-first** y **LLM-agnóstico**, lo que permite validar el sistema sin depender de servicios externos.
+Cobertura:
 
----
-
-###  Alcance de los tests
-
-La suite cubre los siguientes componentes críticos:
-
-####  Healthcheck
-
-* Verifica que el backend levanta correctamente.
-* Endpoint probado: `GET /health`.
-* Usado como señal de vida para Docker y CI/CD.
-
-####  Contrato del endpoint principal
-
-* Valida que `POST /preguntar` **siempre** devuelve el contrato esperado:
-
-```json
-{
-  "respuesta": "string",
-  "fuentes": ["string", "..."]
-}
-```
-
-* Blindaje para frontend, clientes externos y futuros refactors.
-
-####  Modo Baseline
-
-* Fuerza `RAG_MODE=baseline`.
-* Verifica:
-
-  * Respuestas válidas cuando hay evidencia.
-  * Respuesta estándar y `fuentes = []` cuando no se encuentran fragmentos relevantes.
-* Garantiza comportamiento determinístico y reproducible.
-
-####  Fallback automático (LLM → Baseline)
-
-* Fuerza `RAG_MODE=llm`.
-* Valida que, ante errores del LLM (cuotas, red, API), el sistema:
-
-  * **no se cae**.
-  * retorna una respuesta válida usando el baseline.
-* Asegura resiliencia en producción.
-
-####  Estabilidad y latencia
-
-* Ejecuta múltiples requests consecutivas.
-* Verifica:
-
-  * consistencia de respuestas.
-  * latencia total bajo un umbral razonable.
-* Previene degradaciones silenciosas de rendimiento.
-
-####  Carga y chunking del PDF
-
-* Test de integración para la función de ingesta (`cargar_pdf`).
-* Verifica que:
-
-  * el PDF existe.
-  * se puede cargar correctamente.
-  * el proceso de chunking produce **texto útil no vacío**, independientemente de la estructura interna de los chunks.
-
----
-
-###  Estructura de tests
-
-```text
-tests/
-├── conftest.py
-├── test_health.py
-├── test_contract.py
-├── test_baseline.py
-├── test_fallback.py
-├── test_stability.py
-└── test_pdf_loader.py
-```
-
----
-
-###  Ejecutar los tests
-
-Con el entorno virtual activado:
+* Healthcheck
+* Contrato API
+* Baseline determinístico
+* Fallback automático
+* Estabilidad y latencia
+* Ingesta y chunking de PDFs
 
 ```bash
-python -m pytest -q
+pytest -q
 ```
 
-Todos los tests están pensados para:
-
-* ejecutarse rápidamente.
-* no depender de servicios externos.
-* ser reproducibles (baseline por defecto).
-
 ---
-
-###  Filosofía de testing
-
-* Se testea **comportamiento**, no implementación interna.
-* Se prioriza:
-
-  * estabilidad.
-  * contrato.
-  * resiliencia.
-  * reproducibilidad.
-* Los tests relacionados con LLMs son **indirectos** (fallback), evitando dependencias frágiles de APIs externas.
-
-
-
-
 
 ##  Roadmap
 
 ###  Completado
--  Sistema RAG baseline funcional
--  API REST con FastAPI
--  Frontend React
--  Modo LLM con fallback
--  Documentación completa
 
+* Sistema RAG baseline
+* API FastAPI
+* Frontend React
+* CI con GitHub Actions
 
+###  En progreso
 
-
-
-
-###  En Progreso
--  Dockerización completa
--  Tests de integración (>80% coverage)
--  CI/CD pipeline
-
-
-
-
+* Dockerización completa
+* Tests de integración
 
 ###  Futuro
--  Soporte multi-documento (colecciones)
--  Sistema de evaluación automática (RAGAS)
--  Panel administrativo
--  Autenticación y permisos
--  Caché de consultas frecuentes
--  Soporte para más formatos (DOCX, TXT, HTML)
--  Integración con S3 para almacenamiento
--  Métricas y observabilidad (Prometheus + Grafana)
+
+* Multi‑documento
+* Evaluación automática (RAGAS)
+* Observabilidad
+* Autenticación
 
 ---
 
-
-
-
-
-
-
 ##  Licencia
 
-[MIT](LICENSE)
+MIT
 
 ---
 
 ##  Contribución
 
-Pull requests bienvenidos. Para cambios mayores, por favor abrir un issue primero.
+Pull requests bienvenidos.
+
 ```bash
-# Fork y clonar
 git checkout -b feature/nueva-funcionalidad
-git commit -m "Agrega nueva funcionalidad"
+git commit -m "feat: nueva funcionalidad"
 git push origin feature/nueva-funcionalidad
 ```
 
----
-
-**¿Preguntas?** Abre un issue o contacta al equipo.
