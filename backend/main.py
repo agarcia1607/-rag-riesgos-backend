@@ -12,7 +12,10 @@ from backend.baseline_rag import BaselineRAG
 
 
 
-app = FastAPI()
+from fastapi.responses import JSONResponse
+
+app = FastAPI(default_response_class=JSONResponse)
+
 
 
 

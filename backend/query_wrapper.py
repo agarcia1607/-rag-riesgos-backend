@@ -38,14 +38,20 @@ class ChatbotRiesgos:
 
     Modos:
     - baseline: BM25 + extractivo (sin tokens, reproducible)
+    - local: BM25 + Ollama (solo redacción/síntesis; evidencia la decide BM25)
     - llm: Gemini + Chroma (opcional, requiere API key)
 
     Control de modo:
-    - Variable de entorno RAG_MODE = "baseline" | "llm"
+    - Variable de entorno RAG_MODE = "baseline" | "local" | "llm"
       Si no está definida, selecciona automáticamente.
     """
 
-    def __init__(self, persist_directory: str = "chroma_db_riesgos", temperature: float = 0.3, model: str = "gemini-1.5-flash"):
+    def __init__(
+        self,
+        persist_directory: str = "chroma_db_riesgos",
+        temperature: float = 0.3,
+        model: str = "gemini-1.5-flash",
+    ):
         self.persist_directory = persist_directory
         self.temperature = temperature
         self.model = model
@@ -53,6 +59,7 @@ class ChatbotRiesgos:
         self.vectorstore = None
         self.qa_chain = None
         self.baseline = None
+        self.local = None
         self.embedding_function = None
         self.llm = None
 
@@ -64,26 +71,48 @@ class ChatbotRiesgos:
         self.pdf_path = _default_pdf_path()
 
         # 🔑 Selección de modo (forzado o automático)
-        forced_mode = os.getenv("RAG_MODE", "").strip().lower()  # "baseline" o "llm"
-        if forced_mode in {"baseline", "llm"}:
+        forced_mode = os.getenv("RAG_MODE", "").strip().lower()  # "baseline" | "local" | "llm"
+        if forced_mode in {"baseline", "local", "llm"}:
             self.mode = forced_mode
         else:
-            # Auto: si hay API key y existe el vectorstore -> llm, si no -> baseline
+            # Auto:
+            # 1) si hay API key y existe el vectorstore -> llm
+            # 2) si hay Ollama configurado -> local
+            # 3) si no -> baseline
             if self.google_api_key and Path(self.persist_directory).exists():
                 self.mode = "llm"
+            elif os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_MODEL"):
+                self.mode = "local"
             else:
                 self.mode = "baseline"
 
         logger.info(f"🧩 Modo seleccionado: {self.mode}")
 
-        # 🟢 BASELINE (sin tokens)
-        if self.mode == "baseline":
-            self.baseline = BaselineRAG(pdf_path=self.pdf_path, debug=False)
-            logger.info("✅ Baseline inicializado (BM25 + extractivo).")
-            return
+        # ✅ Baseline SIEMPRE disponible para fallback
+        self.baseline = BaselineRAG(pdf_path=self.pdf_path, debug=False)
+
+        # 🟣 LOCAL (BM25 + Ollama)
+        if self.mode == "local":
+            try:
+                from backend.local_rag import LocalRAG
+                self.local = LocalRAG(pdf_path=self.pdf_path)
+                logger.info("🟣 Modo local inicializado (BM25 + Ollama).")
+                return
+            except Exception as e:
+                logger.error(f"❌ Error al inicializar modo local: {e}")
+                logger.info("↩️ Fallback automático a baseline (sin tokens).")
+                self.mode = "baseline"
+                self.local = None
+                logger.info("✅ Baseline activo tras fallo en local.")
+                return
 
         # 🔵 LLM (opcional)
-        self._setup_components()
+        if self.mode == "llm":
+            self._setup_components()
+            return
+
+        # 🟢 BASELINE
+        logger.info("✅ Baseline activo (BM25 + extractivo).")
 
     def _setup_components(self):
         """Configura los componentes del modo LLM (Gemini + Chroma)."""
@@ -152,7 +181,8 @@ class ChatbotRiesgos:
             logger.info("↩️ Fallback automático a baseline (sin tokens).")
 
             self.mode = "baseline"
-            self.baseline = BaselineRAG(pdf_path=self.pdf_path, debug=False)
+            if self.baseline is None:
+                self.baseline = BaselineRAG(pdf_path=self.pdf_path, debug=False)
 
             self.vectorstore = None
             self.qa_chain = None
@@ -172,10 +202,16 @@ class ChatbotRiesgos:
             logger.info(f"🔍 Procesando consulta: {pregunta[:50]}...")
 
             # ✅ Baseline
-            if getattr(self, "mode", "llm") == "baseline":
+            if getattr(self, "mode", "baseline") == "baseline":
                 return self.baseline.ask(pregunta)
 
-            # ✅ LLM
+            # ✅ Local
+            if getattr(self, "mode", "baseline") == "local":
+                if self.local is None:
+                    raise RuntimeError("local no está inicializado en modo local.")
+                return self.local.ask(pregunta)
+
+            # ✅ LLM remoto
             if self.qa_chain is None:
                 raise RuntimeError("qa_chain no está inicializada en modo llm.")
 
@@ -194,9 +230,20 @@ class ChatbotRiesgos:
         except Exception as e:
             logger.error(f"❌ Error al procesar consulta (modo {getattr(self, 'mode', '?')}): {e}")
 
-            # 🔁 Si falló LLM (429/cuota/etc.), degradar a baseline automáticamente
-            if getattr(self, "mode", "llm") == "llm":
+            # 🔁 Si falló LLM remoto (429/cuota/etc.), degradar a baseline automáticamente
+            if getattr(self, "mode", "baseline") == "llm":
                 logger.info("↩️ Fallback a baseline por error en LLM.")
+                try:
+                    self.mode = "baseline"
+                    if self.baseline is None:
+                        self.baseline = BaselineRAG(pdf_path=self.pdf_path, debug=False)
+                    return self.baseline.ask(pregunta)
+                except Exception as e2:
+                    logger.error(f"❌ También falló baseline: {e2}")
+
+            # 🔁 Si falló local, degradar a baseline automáticamente
+            if getattr(self, "mode", "baseline") == "local":
+                logger.info("↩️ Fallback a baseline por error en local.")
                 try:
                     self.mode = "baseline"
                     if self.baseline is None:
@@ -210,11 +257,11 @@ class ChatbotRiesgos:
     def buscar_documentos_similares(self, consulta: str, k: int = 3):
         """
         Busca documentos similares sin generar respuesta.
-        Funciona en baseline y en llm.
+        Funciona en baseline, local y en llm.
         """
         try:
-            # ✅ Baseline: devolvemos los chunks más relevantes del BM25
-            if getattr(self, "mode", "llm") == "baseline":
+            # ✅ Baseline y Local: devolvemos los chunks más relevantes del BM25
+            if getattr(self, "mode", "baseline") in {"baseline", "local"}:
                 hits = self.baseline.store.search(consulta, k=k)  # [(Chunk, score), ...]
                 return [chunk for (chunk, _score) in hits]
 

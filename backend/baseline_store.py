@@ -3,8 +3,8 @@ import re
 import pickle
 from dataclasses import dataclass
 from typing import List, Dict, Any, Tuple
-from backend.Pdf_loader import cargar_pdf
 
+from backend.pdf_loader import cargar_pdf
 
 from rank_bm25 import BM25Okapi
 
