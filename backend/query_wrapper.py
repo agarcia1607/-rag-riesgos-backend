@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import os
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
@@ -17,6 +19,9 @@ from langchain.prompts import PromptTemplate
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Contrato estándar (baseline/local/llm)
+NO_EVIDENCE_STD = "No se encontró evidencia suficiente en los documentos."
 
 
 def _default_pdf_path() -> str:
@@ -44,6 +49,10 @@ class ChatbotRiesgos:
     Control de modo:
     - Variable de entorno RAG_MODE = "baseline" | "local" | "llm"
       Si no está definida, selecciona automáticamente.
+
+    Además:
+    - consultar(..., mode="baseline"/"local"/"llm") permite forzar por request,
+      SIN cambiar el modo global del objeto.
     """
 
     def __init__(
@@ -75,10 +84,6 @@ class ChatbotRiesgos:
         if forced_mode in {"baseline", "local", "llm"}:
             self.mode = forced_mode
         else:
-            # Auto:
-            # 1) si hay API key y existe el vectorstore -> llm
-            # 2) si hay Ollama configurado -> local
-            # 3) si no -> baseline
             if self.google_api_key and Path(self.persist_directory).exists():
                 self.mode = "llm"
             elif os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_MODEL"):
@@ -86,37 +91,50 @@ class ChatbotRiesgos:
             else:
                 self.mode = "baseline"
 
-        logger.info(f"🧩 Modo seleccionado: {self.mode}")
+        logger.info(f"🧩 Modo seleccionado (default): {self.mode}")
 
-        # ✅ Baseline SIEMPRE disponible para fallback
+        # ✅ Baseline SIEMPRE disponible (y base para local)
         self.baseline = BaselineRAG(pdf_path=self.pdf_path, debug=False)
 
-        # 🟣 LOCAL (BM25 + Ollama)
+        # Lazy: no levantamos todo si no toca
         if self.mode == "local":
-            try:
-                from backend.local_rag import LocalRAG
-                self.local = LocalRAG(pdf_path=self.pdf_path)
-                logger.info("🟣 Modo local inicializado (BM25 + Ollama).")
-                return
-            except Exception as e:
-                logger.error(f"❌ Error al inicializar modo local: {e}")
-                logger.info("↩️ Fallback automático a baseline (sin tokens).")
+            self._ensure_local()
+            if self.local is None:
                 self.mode = "baseline"
-                self.local = None
                 logger.info("✅ Baseline activo tras fallo en local.")
-                return
 
-        # 🔵 LLM (opcional)
         if self.mode == "llm":
-            self._setup_components()
+            self._ensure_llm()
+            if self.qa_chain is None:
+                self.mode = "baseline"
+                logger.info("✅ Baseline activo tras fallo en llm.")
+
+        logger.info("✅ Sistema listo.")
+
+    def _ensure_local(self) -> None:
+        """Inicializa LocalRAG (lazy) si no está."""
+        if self.local is not None:
             return
+        try:
+            from backend.local_rag import LocalRAG
+            self.local = LocalRAG(pdf_path=self.pdf_path)
+            logger.info("🟣 Modo local inicializado (lazy, BM25 + Ollama).")
+        except Exception as e:
+            logger.error(f"❌ Error al inicializar modo local: {e}")
+            self.local = None
 
-        # 🟢 BASELINE
-        logger.info("✅ Baseline activo (BM25 + extractivo).")
+    def _ensure_llm(self) -> None:
+        """Inicializa LLM (Gemini + Chroma) (lazy) si no está."""
+        if self.qa_chain is not None and self.vectorstore is not None:
+            return
+        self._setup_components()
 
-    def _setup_components(self):
+    def _setup_components(self) -> None:
         """Configura los componentes del modo LLM (Gemini + Chroma)."""
         try:
+            if not self.google_api_key:
+                raise RuntimeError("GOOGLE_API_KEY no está configurada.")
+
             logger.info("🔧 Inicializando embeddings...")
             self.embedding_function = GoogleGenerativeAIEmbeddings(
                 model="models/embedding-001",
@@ -176,83 +194,93 @@ class ChatbotRiesgos:
             logger.info("✅ Modo LLM inicializado correctamente.")
 
         except Exception as e:
-            # 🔥 En vez de romper el sistema, degradamos a baseline
             logger.error(f"❌ Error al inicializar componentes LLM: {e}")
-            logger.info("↩️ Fallback automático a baseline (sin tokens).")
-
-            self.mode = "baseline"
-            if self.baseline is None:
-                self.baseline = BaselineRAG(pdf_path=self.pdf_path, debug=False)
-
             self.vectorstore = None
             self.qa_chain = None
             self.embedding_function = None
             self.llm = None
 
-            logger.info("✅ Baseline inicializado tras fallo en LLM.")
-
-    def consultar(self, pregunta: str, mostrar_fuentes: bool = False) -> Dict[str, Any]:
+    def consultar(self, pregunta: str, mostrar_fuentes: bool = False, mode: str | None = None) -> Dict[str, Any]:
         """
         Realiza una consulta al sistema.
 
-        Returns:
-            dict: {"respuesta": str, "fuentes": list}
+        mode (opcional): "baseline" | "local" | "llm"
+        Si viene, sobreescribe el modo actual SOLO para esta consulta.
         """
-        try:
-            logger.info(f"🔍 Procesando consulta: {pregunta[:50]}...")
-
-            # ✅ Baseline
-            if getattr(self, "mode", "baseline") == "baseline":
-                return self.baseline.ask(pregunta)
-
-            # ✅ Local
-            if getattr(self, "mode", "baseline") == "local":
-                if self.local is None:
-                    raise RuntimeError("local no está inicializado en modo local.")
-                return self.local.ask(pregunta)
-
-            # ✅ LLM remoto
-            if self.qa_chain is None:
-                raise RuntimeError("qa_chain no está inicializada en modo llm.")
-
-            respuesta = self.qa_chain.invoke({"query": pregunta})
-
-            resultado = {
-                "respuesta": respuesta["result"],
-                "fuentes": respuesta.get("source_documents", [])
+        pregunta = (pregunta or "").strip()
+        if not pregunta:
+            return {
+                "mode": mode or getattr(self, "mode", "baseline"),
+                "respuesta": NO_EVIDENCE_STD,
+                "fuentes": [],
+                "retrieved": [],
+                "no_evidence": True,
+                "used_fallback": False,
+                "gate_reason": "empty_question",
             }
 
+        effective_mode = (mode or getattr(self, "mode", "baseline") or "baseline").strip().lower()
+        logger.info(f"🔍 Consulta modo={effective_mode}: {pregunta[:80]}")
+
+        # ✅ Baseline
+        if effective_mode == "baseline":
+            out = self.baseline.ask(pregunta)
+            out["mode"] = "baseline"
+            return out
+
+        # ✅ Local (lazy init)
+        if effective_mode == "local":
+            self._ensure_local()
+            if self.local is None:
+                # degradación segura al baseline (pero lo reportamos)
+                out = self.baseline.ask(pregunta)
+                out["mode"] = "local"
+                out["used_fallback"] = True
+                out["gate_reason"] = "fallback(local_init_failed)"
+                return out
+
+            out = self.local.ask(pregunta)
+            out["mode"] = "local"
+            return out
+
+        # ✅ LLM remoto (lazy init)
+        if effective_mode == "llm":
+            self._ensure_llm()
+            if self.qa_chain is None:
+                out = self.baseline.ask(pregunta)
+                out["mode"] = "llm"
+                out["used_fallback"] = True
+                out["gate_reason"] = "fallback(llm_init_failed)"
+                return out
+
+            respuesta = self.qa_chain.invoke({"query": pregunta})
+            resultado = {
+                "mode": "llm",
+                "respuesta": respuesta.get("result", "") or "",
+                "fuentes": respuesta.get("source_documents", []),
+                # (si luego quieres: aquí metemos retrieved semántico)
+                "retrieved": [],
+                "no_evidence": False,
+                "used_fallback": False,
+                "gate_reason": None,
+            }
+
+            if not resultado["respuesta"]:
+                resultado["respuesta"] = NO_EVIDENCE_STD
+                resultado["no_evidence"] = True
+                resultado["gate_reason"] = "llm_empty_answer"
+
             if mostrar_fuentes and resultado["fuentes"]:
-                logger.info(f"📄 Encontradas {len(resultado['fuentes'])} fuentes relevantes")
+                logger.info(f"📄 Encontradas {len(resultado['fuentes'])} fuentes (llm).")
 
             return resultado
 
-        except Exception as e:
-            logger.error(f"❌ Error al procesar consulta (modo {getattr(self, 'mode', '?')}): {e}")
-
-            # 🔁 Si falló LLM remoto (429/cuota/etc.), degradar a baseline automáticamente
-            if getattr(self, "mode", "baseline") == "llm":
-                logger.info("↩️ Fallback a baseline por error en LLM.")
-                try:
-                    self.mode = "baseline"
-                    if self.baseline is None:
-                        self.baseline = BaselineRAG(pdf_path=self.pdf_path, debug=False)
-                    return self.baseline.ask(pregunta)
-                except Exception as e2:
-                    logger.error(f"❌ También falló baseline: {e2}")
-
-            # 🔁 Si falló local, degradar a baseline automáticamente
-            if getattr(self, "mode", "baseline") == "local":
-                logger.info("↩️ Fallback a baseline por error en local.")
-                try:
-                    self.mode = "baseline"
-                    if self.baseline is None:
-                        self.baseline = BaselineRAG(pdf_path=self.pdf_path, debug=False)
-                    return self.baseline.ask(pregunta)
-                except Exception as e2:
-                    logger.error(f"❌ También falló baseline: {e2}")
-
-            return {"respuesta": f"❌ Error al procesar la consulta: {str(e)}", "fuentes": []}
+        # modo inválido
+        out = self.baseline.ask(pregunta)
+        out["mode"] = effective_mode
+        out["used_fallback"] = True
+        out["gate_reason"] = f"fallback(invalid_mode:{effective_mode})"
+        return out
 
     def buscar_documentos_similares(self, consulta: str, k: int = 3):
         """
@@ -260,12 +288,12 @@ class ChatbotRiesgos:
         Funciona en baseline, local y en llm.
         """
         try:
-            # ✅ Baseline y Local: devolvemos los chunks más relevantes del BM25
+            # Baseline/Local: BM25
             if getattr(self, "mode", "baseline") in {"baseline", "local"}:
                 hits = self.baseline.store.search(consulta, k=k)  # [(Chunk, score), ...]
                 return [chunk for (chunk, _score) in hits]
 
-            # ✅ LLM: búsqueda semántica
+            # LLM: semántico
             if self.vectorstore is None:
                 raise RuntimeError("vectorstore no está inicializado en modo llm.")
             return self.vectorstore.similarity_search(consulta, k=k)
@@ -274,7 +302,7 @@ class ChatbotRiesgos:
             logger.error(f"❌ Error en búsqueda de similitud: {e}")
             return []
 
-    def mostrar_fuentes(self, fuentes):
+    def mostrar_fuentes(self, fuentes) -> None:
         """Muestra las fuentes de información de manera formateada."""
         if not fuentes:
             print("📄 No se encontraron fuentes específicas.")
@@ -286,7 +314,6 @@ class ChatbotRiesgos:
         for i, doc in enumerate(fuentes, 1):
             content = getattr(doc, "page_content", None)
             if content is None:
-                # baseline chunk
                 content = getattr(doc, "text", str(doc))
 
             contenido = content[:200] + "..." if len(content) > 200 else content

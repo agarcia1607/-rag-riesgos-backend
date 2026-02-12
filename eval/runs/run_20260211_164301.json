@@ -1,0 +1,30 @@
+{
+  "summary": {
+    "run_id": "20260211_164301",
+    "api_url": "http://127.0.0.1:8000/preguntar",
+    "n": 0,
+    "modes_seen": {},
+    "answerable_n": 0,
+    "no_evidence_n": 0,
+    "no_evidence_accuracy": 0.0,
+    "false_answer_rate": 0.0,
+    "false_no_evidence_rate": 0.0,
+    "fallback_rate": 0.0,
+    "fallback_reasons": {},
+    "must_include_pass_rate": 0.0,
+    "latency_p50_s": 0.0,
+    "latency_p95_s": 0.0,
+    "retrieval": {
+      "precision@1": 0.0,
+      "recall@1": 0.0,
+      "hit@1": 0.0,
+      "precision@3": 0.0,
+      "recall@3": 0.0,
+      "hit@3": 0.0,
+      "precision@5": 0.0,
+      "recall@5": 0.0,
+      "hit@5": 0.0
+    }
+  },
+  "results": []
+}

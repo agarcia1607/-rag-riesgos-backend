@@ -1,84 +1,146 @@
-import re
-from typing import Dict, Any, List
-from backend.baseline_store import BaselineStore, Chunk
+from __future__ import annotations
+
+from typing import Dict, Any, List, Tuple
+import logging
+
+from backend.baseline_store import BaselineStore
+
+logger = logging.getLogger(__name__)
+
+NO_EVIDENCE = "No se encontró evidencia suficiente en los documentos."
 
 
-SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
+def _has_any(text: str, terms: List[str]) -> bool:
+    t = (text or "").lower()
+    return any(term in t for term in terms)
 
-def _normalize(text: str) -> str:
-    # Normalización mínima para PDFs (espacios raros, saltos, etc.)
-    text = text.replace("\xa0", " ")
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
 
 class BaselineRAG:
     """
-    Baseline RAG (sin tokens):
-    - Retrieval: BM25 sobre chunks del PDF
-    - "Generation": respuesta extractiva (selección de frases relevantes)
+    Baseline (extractivo, reproducible):
+    - Retrieval: BM25 (BaselineStore)
+    - Respuesta: extractiva / bullet points desde los chunks
+
+    Gates:
+    - empty_question
+    - no_hits
+    - required_topic_missing(cyber)
+    - external_entity_question_gate
     """
 
-    def __init__(self, pdf_path: str = "data/Doc chatbot.pdf", debug: bool = False):
-        self.store = BaselineStore(pdf_path=pdf_path)
+    def __init__(
+        self,
+        pdf_path: str,
+        debug: bool = False,
+        k: int = 5,
+    ):
+        self.pdf_path = pdf_path
+        self.debug = debug
+        self.k = k
+
+        # ✅ Inicializa BM25 store y construye/carga índice
+        self.store = BaselineStore(pdf_path=self.pdf_path)
         self.store.build_or_load()
 
-        if debug:
-            n = len(getattr(self.store, "chunks", []))
-            print("CHUNKS:", n)
-            if n > 0:
-                print("SAMPLE:", self.store.chunks[0].text[:300])
+        logger.info("🟦 BaselineRAG listo (BM25 inicializado).")
 
-    def _best_sentences(self, chunks: List[Chunk], query: str, max_sentences: int = 6) -> List[str]:
-        q_terms = set(re.findall(r"\b\w+\b", query.lower()))
-        scored = []
+    def _hits_to_retrieved(self, hits: List[Tuple[Any, float]]) -> List[Dict[str, Any]]:
+        retrieved: List[Dict[str, Any]] = []
+        for (c, s) in hits:
+            retrieved.append(
+                {
+                    "chunk_id": getattr(c, "chunk_id", None),
+                    "score": float(s),
+                    "metadata": getattr(c, "metadata", {}) or {},
+                    "text": getattr(c, "text", str(c)),
+                }
+            )
+        return retrieved
 
-        for c in chunks:
-            txt = _normalize(c.text)
-            if not txt:
-                continue
-
-            for sent in SENT_SPLIT.split(txt):
-                sent = sent.strip()
-                if len(sent) < 25:
-                    continue
-                s_terms = set(re.findall(r"\b\w+\b", sent.lower()))
-                overlap = len(q_terms & s_terms)
-                if overlap > 0:
-                    scored.append((overlap, sent))
-
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [s for _, s in scored[:max_sentences]]
-
-    def ask(self, query: str, k: int = 5, min_score: float = 0.0) -> Dict[str, Any]:
-        """
-        Responde con un baseline extractivo:
-        - Recupera top-k chunks con BM25
-        - Extrae frases con mayor overlap de términos con la consulta
-
-        Nota:
-        min_score = 0.0 para no bloquear respuestas en PDFs donde BM25 da scores bajos.
-        """
-        hits = self.store.search(query, k=k)
-
-        if not hits:
+    def ask(self, question: str) -> Dict[str, Any]:
+        question = (question or "").strip()
+        if not question:
             return {
-                "respuesta": "No encontré fragmentos relevantes para esa consulta en el documento.",
-                "fuentes": []
+                "mode": "baseline",
+                "respuesta": NO_EVIDENCE,
+                "fuentes": [],
+                "retrieved": [],
+                "no_evidence": True,
+                "used_fallback": False,
+                "gate_reason": "empty_question",
             }
 
-        top_chunks = [c for c, _ in hits]
-        sentences = self._best_sentences(top_chunks, query)
+        hits: List[Tuple[Any, float]] = self.store.search(question, k=self.k)
+        if not hits:
+            return {
+                "mode": "baseline",
+                "respuesta": NO_EVIDENCE,
+                "fuentes": [],
+                "retrieved": [],
+                "no_evidence": True,
+                "used_fallback": False,
+                "gate_reason": "no_hits",
+            }
 
-        best_score = hits[0][1] if hits else 0.0
-        low_confidence = best_score < 0.1
+        retrieved = self._hits_to_retrieved(hits)
+        fuentes = [r["text"] for r in retrieved]
 
-        if sentences:
-            header = "Según el documento, lo más relevante es:"
-            if low_confidence:
-                header = "No estoy 100% seguro, pero encontré fragmentos relacionados. Lo más relevante es:"
-            answer = header + "\n" + "\n".join([f"- {s}" for s in sentences])
-        else:
-            answer = "Encontré fragmentos relacionados, pero no hay una frase directa. Te dejo las fuentes."
+        q = question.lower()
+        context_joined = " ".join(fuentes).lower()
 
-        fuentes = [c.text for c in top_chunks]
-        return {"respuesta": answer, "fuentes": fuentes}
+        # =========================
+        # ✅ GATE: cyber
+        # =========================
+        cyber_q_terms = ["ciber", "cibern", "cyber", "ransom", "malware", "phishing", "ddos", "hack"]
+        cyber_ctx_terms = cyber_q_terms + ["intrusión", "intrusion", "ataque", "ataques"]
+        if _has_any(q, cyber_q_terms) and not _has_any(context_joined, cyber_ctx_terms):
+            return {
+                "mode": "baseline",
+                "respuesta": NO_EVIDENCE,
+                "fuentes": fuentes,
+                "retrieved": retrieved,
+                "no_evidence": True,
+                "used_fallback": False,
+                "gate_reason": "required_topic_missing(cyber)",
+            }
+
+        # =========================
+        # ✅ GATE: entidad externa (CEO, etc.)
+        # =========================
+        external_terms = ["ceo", "director general", "presidente", "owner", "propietario", "gerente general"]
+        if _has_any(q, external_terms):
+            # Si el PDF no menciona explícitamente un nombre en el contexto top-k,
+            # declaramos no_evidence. Esto evita alucinación.
+            # (Puedes endurecerlo con regex de nombres propios si quieres.)
+            if not _has_any(context_joined, [" ceo", "director general", "presidente"]):
+                return {
+                    "mode": "baseline",
+                    "respuesta": NO_EVIDENCE,
+                    "fuentes": fuentes,
+                    "retrieved": retrieved,
+                    "no_evidence": True,
+                    "used_fallback": False,
+                    "gate_reason": "external_entity_question_gate",
+                }
+
+        # =========================
+        # Extractivo simple (no inventa)
+        # =========================
+        bullets = []
+        for r in retrieved[: min(5, len(retrieved))]:
+            t = (r["text"] or "").strip()
+            if not t:
+                continue
+            bullets.append(f"- {t}")
+
+        respuesta = "Según el documento, lo más relevante es:\n" + "\n".join(bullets)
+
+        return {
+            "mode": "baseline",
+            "respuesta": respuesta,
+            "fuentes": fuentes,
+            "retrieved": retrieved,
+            "no_evidence": False,
+            "used_fallback": False,
+            "gate_reason": None,
+        }

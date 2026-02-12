@@ -1,0 +1,5 @@
+{"id":"v1_0001","question":"¿Cuáles son los niveles de riesgo mencionados en el documento?","label":"ANSWERABLE","evidence_chunk_ids":[101,113,114],"must_include":["RIESGO BAJO","RIESGO","ALTO"]}
+{"id":"v1_0002","question":"¿Cuál es el deducible por fallas en el sistema de refrigeración?","label":"ANSWERABLE","evidence_chunk_ids":[36],"must_include":["10%","USD","1,500"]}
+{"id":"v1_0003","question":"¿Qué significa VRDLM?","label":"ANSWERABLE","evidence_chunk_ids":[106],"must_include":["VRDLM"]}
+{"id":"v1_0004","question":"¿Cuál es el nombre del CEO de la aseguradora?","label":"NO_EVIDENCE","evidence_chunk_ids":[],"must_include":[]}
+{"id":"v1_0005","question":"¿La póliza cubre ataques cibernéticos al transportista?","label":"NO_EVIDENCE","evidence_chunk_ids":[],"must_include":[]}

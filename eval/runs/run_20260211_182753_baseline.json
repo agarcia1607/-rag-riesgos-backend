@@ -1,0 +1,144 @@
+{
+  "summary": {
+    "run_id": "20260211_182753",
+    "api_url": "http://127.0.0.1:8000/preguntar",
+    "mode_requested": "baseline",
+    "n": 5,
+    "answerable_n": 3,
+    "no_evidence_n": 2,
+    "no_evidence_accuracy": 0.0,
+    "false_answer_rate": 1.0,
+    "false_no_evidence_rate": 0.0,
+    "fallback_rate": 0.0,
+    "fallback_reasons": {},
+    "must_include_pass_rate": 1.0,
+    "latency_p50_s": 0.005800962448120117,
+    "latency_p95_s": 0.007395267486572266,
+    "retrieval": {
+      "precision@1": 0.6666666666666666,
+      "recall@1": 0.6666666666666666,
+      "hit@1": 0.6666666666666666,
+      "precision@3": 0.4444444444444444,
+      "recall@3": 0.8888888888888888,
+      "hit@3": 1.0,
+      "precision@5": 0.26666666666666666,
+      "recall@5": 0.8888888888888888,
+      "hit@5": 1.0
+    }
+  },
+  "results": [
+    {
+      "id": "v1_0001",
+      "question": "¿Cuáles son los niveles de riesgo mencionados en el documento?",
+      "label": "ANSWERABLE",
+      "mode_requested": "baseline",
+      "mode_returned": "baseline",
+      "latency_s": 0.011034727096557617,
+      "no_evidence": false,
+      "no_evidence_flag": false,
+      "used_fallback": false,
+      "gate_reason": null,
+      "retrieved_chunk_ids_top10": [
+        18,
+        113,
+        101,
+        72,
+        14
+      ],
+      "gold_chunk_ids": [
+        101,
+        113,
+        114
+      ],
+      "must_include_ok": true
+    },
+    {
+      "id": "v1_0002",
+      "question": "¿Cuál es el deducible por fallas en el sistema de refrigeración?",
+      "label": "ANSWERABLE",
+      "mode_requested": "baseline",
+      "mode_returned": "baseline",
+      "latency_s": 0.005800962448120117,
+      "no_evidence": false,
+      "no_evidence_flag": false,
+      "used_fallback": false,
+      "gate_reason": null,
+      "retrieved_chunk_ids_top10": [
+        36,
+        55,
+        35,
+        81,
+        82
+      ],
+      "gold_chunk_ids": [
+        36
+      ],
+      "must_include_ok": true
+    },
+    {
+      "id": "v1_0003",
+      "question": "¿Qué significa VRDLM?",
+      "label": "ANSWERABLE",
+      "mode_requested": "baseline",
+      "mode_returned": "baseline",
+      "latency_s": 0.005311727523803711,
+      "no_evidence": false,
+      "no_evidence_flag": false,
+      "used_fallback": false,
+      "gate_reason": null,
+      "retrieved_chunk_ids_top10": [
+        106,
+        107,
+        110,
+        111,
+        112
+      ],
+      "gold_chunk_ids": [
+        106
+      ],
+      "must_include_ok": true
+    },
+    {
+      "id": "v1_0004",
+      "question": "¿Cuál es el nombre del CEO de la aseguradora?",
+      "label": "NO_EVIDENCE",
+      "mode_requested": "baseline",
+      "mode_returned": "baseline",
+      "latency_s": 0.007395267486572266,
+      "no_evidence": false,
+      "no_evidence_flag": false,
+      "used_fallback": false,
+      "gate_reason": null,
+      "retrieved_chunk_ids_top10": [
+        42,
+        43,
+        124,
+        119,
+        39
+      ],
+      "gold_chunk_ids": [],
+      "must_include_ok": null
+    },
+    {
+      "id": "v1_0005",
+      "question": "¿La póliza cubre ataques cibernéticos al transportista?",
+      "label": "NO_EVIDENCE",
+      "mode_requested": "baseline",
+      "mode_returned": "baseline",
+      "latency_s": 0.004609823226928711,
+      "no_evidence": false,
+      "no_evidence_flag": false,
+      "used_fallback": false,
+      "gate_reason": null,
+      "retrieved_chunk_ids_top10": [
+        53,
+        93,
+        51,
+        125,
+        49
+      ],
+      "gold_chunk_ids": [],
+      "must_include_ok": null
+    }
+  ]
+}
