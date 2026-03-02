@@ -5,14 +5,13 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Tuple
 
 from backend.pdf_loader import cargar_pdf
-
 from rank_bm25 import BM25Okapi
 
 TOKEN_RE = re.compile(r"\b\w+\b", re.UNICODE)
 
 
 def tokenize(text: str) -> List[str]:
-    return [t.lower() for t in TOKEN_RE.findall(text)]
+    return [t.lower() for t in TOKEN_RE.findall(text or "")]
 
 
 @dataclass
@@ -55,9 +54,26 @@ class BaselineStore:
             pickle.dump({"chunks": self.chunks, "corpus_tokens": self.corpus_tokens}, f)
 
     def search(self, query: str, k: int = 5) -> List[Tuple[Chunk, float]]:
+        """
+        Devuelve top-k hits BM25.
+        FIX CLAVE: si BM25 no encuentra señal (todos los scores == 0),
+        devolvemos [] para activar 'no_hits' y permitir abstención.
+        """
         if self.bm25 is None:
             raise RuntimeError("BM25 not initialized. Call build_or_load() first.")
-        q = tokenize(query)
-        scores = self.bm25.get_scores(q)
-        ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)[:k]
-        return [(self.chunks[i], float(s)) for i, s in ranked]
+
+        q_tokens = tokenize(query)
+        if not q_tokens:
+            return []
+
+        scores = self.bm25.get_scores(q_tokens)
+
+        # ✅ Si todos son 0.0 (o no positivos), NO devolvemos basura: devolvemos []
+        ranked = [(i, float(s)) for i, s in enumerate(scores) if float(s) > 0.0]
+        if not ranked:
+            return []
+
+        ranked.sort(key=lambda x: x[1], reverse=True)
+        ranked = ranked[:k]
+
+        return [(self.chunks[i], s) for i, s in ranked]
