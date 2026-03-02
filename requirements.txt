@@ -28,7 +28,6 @@ filetype==1.2.0
 flatbuffers==25.2.10
 frozenlist==1.7.0
 fsspec==2025.5.1
-ftfy==6.3.1
 google-ai-generativelanguage==0.6.15
 google-api-core==2.25.1
 google-api-python-client==2.176.0
@@ -148,4 +147,4 @@ websockets==15.0.1
 yarl==1.20.1
 zipp==3.23.0
 zstandard==0.23.0
-ftfy==6.2.3
+ftfy
