@@ -40,7 +40,7 @@ NO_EVIDENCE = "No se encontró evidencia suficiente en los documentos."
 class Pregunta(BaseModel):
     texto: str
     mode: str | None = None  # baseline | local | llm
-    top_k: int | None = None  # opcional: si el backend lo usa
+    top_k: int | None = None  # opcional: solo si el backend lo soporta
 
 
 # =====================================================
@@ -54,7 +54,7 @@ def _normalize_fuentes(raw_fuentes):
     En LLM: raw_fuentes pueden ser Document con .page_content
     En baseline/local: raw_fuentes suelen ser strings
     """
-    fuentes = []
+    fuentes: list[str] = []
     for f in raw_fuentes or []:
         if isinstance(f, str):
             fuentes.append(f)
@@ -77,13 +77,38 @@ def is_render() -> bool:
 
 def should_force_baseline(requested_mode: str | None) -> bool:
     """
-    En Render NO hay Ollama local, y hoy tu pipeline 'local/llm' está tocando embeddings remotos.
+    En Render NO hay Ollama local.
     Para que producción no se caiga: en Render forzamos baseline si piden local/llm.
     """
     rm = (requested_mode or "local").lower()
-    if is_render() and rm in ("local", "llm"):
-        return True
-    return False
+    return bool(is_render() and rm in ("local", "llm"))
+
+
+def _safe_contract(
+    *,
+    respuesta: str,
+    fuentes=None,
+    retrieved=None,
+    mode: str,
+    requested_mode: str,
+    no_evidence: bool | None = None,
+    used_fallback: bool = False,
+    gate_reason: str | None = None,
+    error: str | None = None,
+):
+    data = {
+        "respuesta": respuesta,
+        "fuentes": _normalize_fuentes(fuentes or []),
+        "retrieved": retrieved or [],
+        "mode": mode,
+        "requested_mode": requested_mode,
+        "no_evidence": bool(no_evidence) if no_evidence is not None else (respuesta == NO_EVIDENCE),
+        "used_fallback": bool(used_fallback),
+        "gate_reason": gate_reason,
+    }
+    if error is not None:
+        data["error"] = error
+    return data
 
 
 # =====================================================
@@ -102,28 +127,46 @@ async def preguntar(pregunta: Pregunta):
     if should_force_baseline(requested_mode):
         effective_mode = "baseline"
 
-    # Nota: top_k solo se pasa si tu consultar() lo soporta.
-    # Si NO lo soporta, elimina top_k del llamado.
-    kwargs = dict(mostrar_fuentes=True, mode=effective_mode)
-    if pregunta.top_k is not None:
-        kwargs["top_k"] = int(pregunta.top_k)
+    try:
+        # ✅ Llamada segura: NO pasamos top_k a menos que sepamos que consultar() lo soporta.
+        # Como no lo sabemos, lo omitimos para evitar 500s en producción.
+        r = chatbot.consultar(
+            pregunta.texto,
+            mostrar_fuentes=True,
+            mode=effective_mode
+        )
 
-    r = chatbot.consultar(pregunta.texto, **kwargs)
+        # Normalización + contrato estable
+        r["fuentes"] = _normalize_fuentes(r.get("fuentes", []))
+        r.setdefault("retrieved", [])
+        r.setdefault("used_fallback", False)
+        r.setdefault("gate_reason", None)
+        r.setdefault("no_evidence", (r.get("respuesta", "") == NO_EVIDENCE))
 
-    # Normalización + contrato estable
-    r["fuentes"] = _normalize_fuentes(r.get("fuentes", []))
-    r.setdefault("retrieved", [])
-    r.setdefault("used_fallback", False)
-    r.setdefault("gate_reason", None)
+        # Debug: reporta ambos
+        r["mode"] = effective_mode
+        r["requested_mode"] = requested_mode
 
-    # no_evidence por default: compara con NO_EVIDENCE (manteniendo tu lógica)
-    r.setdefault("no_evidence", (r.get("respuesta", "") == NO_EVIDENCE))
+        # Asegura llaves base aunque el wrapper devuelva algo raro
+        r.setdefault("respuesta", "")
+        r.setdefault("fuentes", [])
+        r.setdefault("retrieved", [])
 
-    # Debug: reporta ambos
-    r["mode"] = effective_mode
-    r["requested_mode"] = requested_mode
+        return r
 
-    return r
+    except Exception as e:
+        # ✅ Nunca devuelvas plain-text 500; responde JSON con contrato estable
+        return _safe_contract(
+            respuesta=f"❌ Error al procesar la consulta: {str(e)}",
+            fuentes=[],
+            retrieved=[],
+            mode=effective_mode,
+            requested_mode=requested_mode,
+            no_evidence=True,
+            used_fallback=True,
+            gate_reason="exception",
+            error=type(e).__name__,
+        )
 
 
 @app.get("/")
