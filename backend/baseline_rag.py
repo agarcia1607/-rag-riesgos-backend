@@ -9,7 +9,7 @@ from backend.baseline_store import BaselineStore
 logger = logging.getLogger(__name__)
 
 NO_EVIDENCE = "No se encontró evidencia suficiente en los documentos."
-BASELINE_VERSION = "robust_v4.4.1_2026-03-03"
+BASELINE_VERSION = "robust_v4.4.2_2026-03-03"
 
 # ---------------------------
 # Regex / Patterns
@@ -33,8 +33,9 @@ TIME_RE = re.compile(
     re.IGNORECASE,
 )
 
-PERCENT_RE = re.compile(r"\b(\d{1,3})\s*%\b")
-POR_CIENTO_RE = re.compile(r"\b(\d{1,3})\s*por\s*ciento\b", re.IGNORECASE)
+# Percent (incluye % unicode fullwidth ％)
+PERCENT_ANY_RE = re.compile(r"\b\d{1,3}\s*[%％]\b")
+PERCENT_WORD_RE = re.compile(r"\b\d{1,3}\s*por\s*ciento\b", re.IGNORECASE)
 
 # ---------------------------
 # Helper Functions
@@ -42,6 +43,7 @@ POR_CIENTO_RE = re.compile(r"\b(\d{1,3})\s*por\s*ciento\b", re.IGNORECASE)
 
 def _is_page_marker(s: str) -> bool:
     return bool(re.fullmatch(r"\[PAGE\s+\d+\]", (s or "").strip(), re.IGNORECASE))
+
 
 def _filter_noise(retrieved: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
@@ -54,11 +56,14 @@ def _filter_noise(retrieved: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         out.append(r)
     return out
 
+
 def _join_text(retrieved: List[Dict[str, Any]]) -> str:
     return " ".join([(r.get("text") or "") for r in retrieved or []])
 
+
 def _retrieved_texts(retrieved: List[Dict[str, Any]]) -> List[str]:
     return [(r.get("text") or "") for r in (retrieved or [])]
+
 
 # ---------------------------
 # Conservative Gates (refined)
@@ -87,6 +92,7 @@ def _is_vague_question(q: str) -> bool:
     ]
     return any(p in ql for p in vague_patterns)
 
+
 def _is_hard_vague(q: str) -> bool:
     """
     Vagas “duras” que en Fase 1 baseline-first deben abstener
@@ -109,6 +115,7 @@ def _is_hard_vague(q: str) -> bool:
     }
     return ql in hard
 
+
 def _is_boilerplate(text: str) -> bool:
     tl = (text or "").lower()
     patterns = [
@@ -123,22 +130,64 @@ def _is_boilerplate(text: str) -> bool:
     ]
     return any(p in tl for p in patterns)
 
+
 # Anclas: ayudan a NO abstener por boilerplate/vague (pero no son suficientes para “hard vague”)
 ANCHORS = [
-    "prima", "factura", "pago", "mensual", "mínima", "minima", "plazo",
-    "límite", "limite", "máximo", "maximo", "usd", "mxn", "$", "%",
-    "cobertura", "exclus", "deducible", "suma asegurada", "vigencia",
-    "responsabilidad", "indemn", "reclam", "siniestro", "aviso", "procedimiento",
-    "documentos", "obligaciones",
-    "requisitos", "obligatorios", "escolta", "monitoreo", "riesgo", "vrdlm",
-    "cláusula", "clausula", "siniestralidad",
-    "uber", "cabify", "hongos", "plagas", "buque", "años", "antigüedad", "antiguedad",
-    "tecnología", "tecnologia", "5g",
+    "prima",
+    "factura",
+    "pago",
+    "mensual",
+    "mínima",
+    "minima",
+    "plazo",
+    "límite",
+    "limite",
+    "máximo",
+    "maximo",
+    "usd",
+    "mxn",
+    "$",
+    "%",
+    "cobertura",
+    "exclus",
+    "deducible",
+    "suma asegurada",
+    "vigencia",
+    "responsabilidad",
+    "indemn",
+    "reclam",
+    "siniestro",
+    "aviso",
+    "procedimiento",
+    "documentos",
+    "obligaciones",
+    "requisitos",
+    "obligatorios",
+    "escolta",
+    "monitoreo",
+    "riesgo",
+    "vrdlm",
+    "cláusula",
+    "clausula",
+    "siniestralidad",
+    "uber",
+    "cabify",
+    "hongos",
+    "plagas",
+    "buque",
+    "años",
+    "antigüedad",
+    "antiguedad",
+    "tecnología",
+    "tecnologia",
+    "5g",
 ]
+
 
 def _has_anchor(ctx: str) -> bool:
     cl = (ctx or "").lower()
     return any(a in cl for a in ANCHORS)
+
 
 def _has_useful_section(ctx: str) -> bool:
     """
@@ -148,11 +197,22 @@ def _has_useful_section(ctx: str) -> bool:
     """
     cl = (ctx or "").lower()
     section_terms = [
-        "procedimiento", "en caso de siniestro", "aviso", "reclamación", "reclamacion",
-        "cobertura", "exclusiones", "exclusión", "exclusion", "deducible",
-        "suma asegurada", "vigencia", "obligaciones",
+        "procedimiento",
+        "en caso de siniestro",
+        "aviso",
+        "reclamación",
+        "reclamacion",
+        "cobertura",
+        "exclusiones",
+        "exclusión",
+        "exclusion",
+        "deducible",
+        "suma asegurada",
+        "vigencia",
+        "obligaciones",
     ]
     return any(t in cl for t in section_terms)
+
 
 # ---------------------------
 # Question Detection Gates
@@ -160,7 +220,14 @@ def _has_useful_section(ctx: str) -> bool:
 
 def _needs_policy_number(q: str) -> bool:
     ql = (q or "").lower()
-    return "póliza" in ql and ("número" in ql or "numero" in ql or "no." in ql or "específico" in ql or "especifico" in ql)
+    return "póliza" in ql and (
+        "número" in ql
+        or "numero" in ql
+        or "no." in ql
+        or "específico" in ql
+        or "especifico" in ql
+    )
+
 
 def _needs_reporting_days(q: str) -> bool:
     ql = (q or "").lower()
@@ -170,90 +237,97 @@ def _needs_reporting_days(q: str) -> bool:
         and "siniestro" in ql
     )
 
+
 def _needs_reporting_days_for_damages(q: str) -> bool:
     ql = (q or "").lower()
     return _needs_reporting_days(q) and ("daños" in ql or "danos" in ql or "no robo" in ql or "no asalto" in ql)
+
 
 def _needs_time_to_pay(q: str) -> bool:
     ql = (q or "").lower()
     return ("cuánto tiempo" in ql or "cuanto tiempo" in ql or "plazo" in ql) and ("pagar" in ql or "pago" in ql) and ("indemn" in ql)
 
+
 def _needs_specific_ship(q: str) -> bool:
     ql = (q or "").lower()
     return "buque" in ql and ("libertador" in ql)
+
 
 def _needs_drone_military_clause(q: str) -> bool:
     ql = (q or "").lower()
     return ("drone" in ql or "drones" in ql) and "militar" in ql
 
+
 def _needs_email(q: str) -> bool:
     ql = (q or "").lower()
     return ("correo" in ql or "email" in ql or "e-mail" in ql) and ("contacto" in ql or "report" in ql or "siniestro" in ql or "chubb" in ql)
+
 
 def _needs_phone(q: str) -> bool:
     ql = (q or "").lower()
     return ("teléfono" in ql or "telefono" in ql or "celular" in ql or "línea" in ql or "linea" in ql) and ("ajust" in ql or "contacto" in ql or "siniestro" in ql)
 
+
 def _needs_percent(q: str) -> bool:
     ql = (q or "").lower()
     return ("porcentaje" in ql or "%" in ql or "porcentual" in ql) and (
-        "cuota" in ql or "aplic" in ql or "valor asegurado" in ql or "siniestralidad" in ql
-        or "proporción" in ql or "proporcion" in ql
+        "cuota" in ql
+        or "aplic" in ql
+        or "valor asegurado" in ql
+        or "siniestralidad" in ql
+        or "proporción" in ql
+        or "proporcion" in ql
     )
+
 
 def _needs_percent_proportion_indemnizable(q: str) -> bool:
     ql = (q or "").lower()
     return ("porcentaje" in ql or "%" in ql) and ("proporción indemnizable" in ql or "proporcion indemnizable" in ql)
 
+
 def _needs_5g_endorsement(q: str) -> bool:
-    ql = (q or "").lower()
-    return "5g" in ql
+    return "5g" in (q or "").lower()
+
 
 def _is_historical_external(q: str) -> bool:
     ql = (q or "").lower()
     return ("cuántos siniestros" in ql or "cuantos siniestros" in ql) and ("últimos" in ql or "ultimos" in ql or "12 meses" in ql or "año" in ql or "ano" in ql)
 
+
 def _mentions_country_outside_scope(q: str) -> str:
     ql = (q or "").lower()
-    countries = [
-        "brasil", "argentina", "chile", "perú", "peru",
-        "colombia", "eeuu", "usa", "estados unidos", "canadá", "canada"
-    ]
+    countries = ["brasil", "argentina", "chile", "perú", "peru", "colombia", "eeuu", "usa", "estados unidos", "canadá", "canada"]
     for c in countries:
         if c in ql:
             return c
     return ""
+
 
 # ---------------------------
 # Evidence Checks
 # ---------------------------
 
 def _evidence_has_policy_number(ctx: str) -> bool:
-    # forma explícita (póliza: XXXX)
     return bool(POLICY_RE.search(ctx or ""))
+
 
 def _evidence_has_policy_id_anywhere(retrieved_texts: List[str]) -> bool:
     """
-    Para “número de póliza específico asignado a este contrato”:
-    exigimos ver un ID con pinta de póliza en algún chunk.
-    (No basta con decir “póliza” sin ID).
+    Para “número de póliza específico”: exige un ID con pinta de póliza en algún chunk.
     """
     for t in retrieved_texts:
         tl = (t or "").lower()
         if "póliza" in tl or "poliza" in tl:
-            # si el mismo chunk menciona póliza, buscamos tokens tipo ID
             if POLICY_RE.search(t) or POLICY_ID_RE.search(t):
-                # filtrar tokens demasiado genéricos tipo "USD", "MXN", etc.
-                # (si aparece "USD" será capturado por POLICY_ID_RE, lo evitamos)
                 for m in POLICY_ID_RE.finditer(t):
                     tok = m.group(0)
                     if tok.upper() in {"USD", "MXN"}:
                         continue
-                    # evitar tokens solo numéricos cortos
                     digits = re.sub(r"\D", "", tok)
                     if len(digits) >= 6 or ("-" in tok and len(tok) >= 7):
                         return True
     return False
+
 
 def _evidence_has_reporting_days(ctx: str) -> bool:
     if not ctx:
@@ -263,19 +337,17 @@ def _evidence_has_reporting_days(ctx: str) -> bool:
         return False
     return bool(DAYS_RE.search(ctx))
 
+
 def _evidence_has_reporting_days_for_damages(ctx: str) -> bool:
-    """
-    Para “daños (no robo)” exigimos:
-    - que haya días
-    - y que el contexto mencione daños / no robo / no asalto (o equivalente)
-    """
     if not _evidence_has_reporting_days(ctx):
         return False
     cl = (ctx or "").lower()
     return ("daños" in cl or "danos" in cl or "no robo" in cl or "no asalto" in cl or "daño" in cl or "dano" in cl)
 
+
 def _evidence_has_email(ctx: str) -> bool:
     return bool(EMAIL_RE.search(ctx or ""))
+
 
 def _evidence_has_phone(ctx: str) -> bool:
     if not ctx:
@@ -286,36 +358,47 @@ def _evidence_has_phone(ctx: str) -> bool:
             return True
     return False
 
-def _evidence_has_percent(ctx: str) -> bool:
-    if not ctx:
+
+def _evidence_has_percent_in_retrieved(retrieved: List[Dict[str, Any]]) -> bool:
+    """
+    IMPORTANT: chequea directamente en los chunks retrieved (no en ctx),
+    para evitar bugs de join/encoding y soportar % unicode.
+    """
+    if not retrieved:
         return False
-    # acepta "60%" o "60 %"
-    if re.search(r"\b\d{1,3}\s*%\b", ctx):
-        return True
-    # acepta "60 por ciento"
-    if re.search(r"\b\d{1,3}\s*por\s*ciento\b", ctx, re.IGNORECASE):
-        return True
+    for r in retrieved:
+        t = (r.get("text") or "")
+        if not t:
+            continue
+        if PERCENT_ANY_RE.search(t):
+            return True
+        if PERCENT_WORD_RE.search(t):
+            return True
     return False
+
+
 def _evidence_has_percent_near_proportion(retrieved_texts: List[str]) -> bool:
     """
     Para “proporción indemnizable”, exigir que el % aparezca
     en el MISMO chunk donde aparece 'propor' o 'indemniz'.
-    Evita falsos positivos cuando otro chunk tiene '%'.
     """
     for t in retrieved_texts:
         tl = (t or "").lower()
         if ("propor" in tl or "indemniz" in tl):
-            if PERCENT_RE.search(t) or POR_CIENTO_RE.search(t):
+            if PERCENT_ANY_RE.search(t) or PERCENT_WORD_RE.search(t):
                 return True
     return False
+
 
 def _evidence_has_time(ctx: str) -> bool:
     if not ctx:
         return False
     return bool(TIME_RE.search(ctx))
 
+
 def _evidence_mentions(term: str, ctx: str) -> bool:
     return bool(term) and (term.lower() in (ctx or "").lower())
+
 
 # ---------------------------
 # Main Class
@@ -436,8 +519,8 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Porcentaje general requerido
-        if _needs_percent(question) and not _evidence_has_percent(ctx):
+        # Porcentaje general requerido (FIX: chequear en retrieved)
+        if _needs_percent(question) and not _evidence_has_percent_in_retrieved(retrieved):
             return {
                 "mode": "baseline",
                 "respuesta": NO_EVIDENCE,
@@ -464,9 +547,7 @@ class BaselineRAG:
 
         # Número de póliza específico: exige ID real (no basta mencionar póliza)
         if _needs_policy_number(question):
-            # primero: forma explícita
             if not _evidence_has_policy_number(ctx):
-                # fallback: buscar “ID con pinta” en chunks donde mencionan póliza
                 if not _evidence_has_policy_id_anywhere(texts):
                     return {
                         "mode": "baseline",
@@ -492,7 +573,7 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Reporte de siniestro por daños (no robo): exige contexto de daños/no robo + días
+        # Reporte de siniestro por daños (no robo)
         if _needs_reporting_days_for_damages(question) and not _evidence_has_reporting_days_for_damages(ctx):
             return {
                 "mode": "baseline",
@@ -505,7 +586,7 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Tiempo de pago de indemnización: exige número + unidad temporal
+        # Tiempo de pago de indemnización
         if _needs_time_to_pay(question) and not _evidence_has_time(ctx):
             return {
                 "mode": "baseline",
@@ -518,7 +599,7 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # País fuera del alcance: si preguntan por un país y no aparece en evidencia => abstener
+        # País fuera del alcance
         country = _mentions_country_outside_scope(question)
         if country and not _evidence_mentions(country, ctx):
             return {
@@ -532,7 +613,7 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Endoso/tema específico 5G: si no aparece “5g” en evidencia => abstener
+        # Endoso/tema específico 5G
         if _needs_5g_endorsement(question) and ("5g" not in ctx_low):
             return {
                 "mode": "baseline",
