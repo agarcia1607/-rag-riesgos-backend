@@ -19,36 +19,40 @@ EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
 # Teléfono “tolerante”: detecta secuencias razonables de dígitos (con espacios/guiones/paréntesis)
 PHONE_RE = re.compile(r"(\+?\d[\d\s().-]{6,}\d)")
 # Póliza: algo tipo “póliza: ABC123…” o “No. de póliza …”
-POLICY_RE = re.compile(r"(p[oó]liza|no\.?\s*de\s*p[oó]liza|n[uú]mero\s*de\s*p[oó]liza)\s*[:#]?\s*([A-Z0-9-]{4,})",
-                       re.IGNORECASE)
+POLICY_RE = re.compile(
+    r"(p[oó]liza|no\.?\s*de\s*p[oó]liza|n[uú]mero\s*de\s*p[oó]liza)\s*[:#]?\s*([A-Z0-9-]{4,})",
+    re.IGNORECASE,
+)
+
 
 def _has_any(text: str, terms: List[str]) -> bool:
     t = (text or "").lower()
     return any(term in t for term in terms)
 
+
 def _is_page_marker(s: str) -> bool:
     return bool(re.fullmatch(r"\[PAGE\s+\d+\]", (s or "").strip(), re.IGNORECASE))
 
+
 def _filter_noise(retrieved: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    out = []
+    out: List[Dict[str, Any]] = []
     for r in retrieved or []:
         txt = (r.get("text") or "").strip()
         if not txt:
             continue
         if _is_page_marker(txt):
             continue
-        # Opcional: filtrar tabla de contenidos si te mete ruido
-        if "................................................................" in txt:
-            # pero OJO: algunas veces sirve. Si te molesta, déjalo.
-            pass
+        # opcional: filtrar tabla de contenidos si te mete ruido (lo dejamos pasar por ahora)
         out.append(r)
     return out
+
 
 def _join_text(retrieved: List[Dict[str, Any]]) -> str:
     return " ".join([(r.get("text") or "") for r in retrieved or []])
 
+
 def _max_score(retrieved: List[Dict[str, Any]]) -> float:
-    scores = []
+    scores: List[float] = []
     for r in retrieved or []:
         try:
             scores.append(float(r.get("score", 0.0)))
@@ -56,9 +60,9 @@ def _max_score(retrieved: List[Dict[str, Any]]) -> float:
             pass
     return max(scores) if scores else 0.0
 
+
 def _is_vague_question(q: str) -> bool:
     ql = (q or "").strip().lower()
-    # heurística: preguntas demasiado amplias
     vague_patterns = [
         "¿cómo funciona",
         "como funciona",
@@ -70,58 +74,66 @@ def _is_vague_question(q: str) -> bool:
     ]
     if any(p in ql for p in vague_patterns):
         return True
-    # muy corta y genérica
     if len(ql) <= 18 and ("condiciones" in ql or "funciona" in ql):
         return True
     return False
+
 
 def _needs_email(q: str) -> bool:
     ql = (q or "").lower()
     return ("correo" in ql) or ("email" in ql) or ("e-mail" in ql)
 
+
 def _needs_phone(q: str) -> bool:
     ql = (q or "").lower()
     return ("tel" in ql) or ("teléfono" in ql) or ("telefono" in ql) or ("whatsapp" in ql)
+
 
 def _needs_policy_number(q: str) -> bool:
     ql = (q or "").lower()
     return ("número de póliza" in ql) or ("numero de poliza" in ql) or ("no. de póliza" in ql) or ("no de póliza" in ql)
 
+
 def _needs_percent_quota(q: str) -> bool:
     ql = (q or "").lower()
-    # cuota base porcentual
     return ("cuota base" in ql) and ("%" in ql or "porcent" in ql)
+
 
 def _needs_historical_claims(q: str) -> bool:
     ql = (q or "").lower()
     return ("cuántos siniestros" in ql or "cuantos siniestros" in ql) and ("últimos" in ql or "ultimos" in ql)
 
+
 def _needs_indemnity_payment_time(q: str) -> bool:
     ql = (q or "").lower()
     return ("tarda" in ql or "cuánto tiempo" in ql or "cuanto tiempo" in ql) and ("pagar" in ql or "pago" in ql) and ("indemn" in ql)
+
 
 def _needs_country_coverage(q: str) -> bool:
     ql = (q or "").lower()
     return "cubre" in ql and ("brasil" in ql or "argentina" in ql or "chile" in ql or "perú" in ql or "peru" in ql)
 
+
 def _needs_proporcion_percent(q: str) -> bool:
     ql = (q or "").lower()
     return ("proporción indemnizable" in ql or "proporcion indemnizable" in ql) and ("porcentaje" in ql or "%" in ql)
 
+
 def _evidence_has_email(ctx: str) -> bool:
     return bool(EMAIL_RE.search(ctx or ""))
 
+
 def _evidence_has_phone(ctx: str) -> bool:
-    # evita falsos positivos por “teléfono de la persona que atenderá…”
-    # aquí pedimos que haya números “de verdad”
     m = PHONE_RE.search(ctx or "")
     if not m:
         return False
     digits = re.sub(r"\D", "", m.group(1))
     return len(digits) >= 7
 
+
 def _evidence_has_policy_number(ctx: str) -> bool:
     return bool(POLICY_RE.search(ctx or ""))
+
 
 def _evidence_has_percent_near(ctx: str, keyword: str, window: int = 80) -> bool:
     if not ctx:
@@ -143,13 +155,18 @@ class BaselineRAG:
     - Retrieval: BM25 (BaselineStore)
     - Respuesta: extractiva / bullet points desde los chunks
 
-    Gates (ahora robustos):
+    Gates (robustos):
     - empty_question
     - no_hits (real)
-    - no_signal (BM25 sin señal: scores ~ 0)
+    - no_signal(all_noise)
+    - no_signal(score<=0)
     - required_topic_missing(cyber)
     - external_entity_question_gate
     - missing_required_pattern(email/phone/policy/percent/etc.)
+    - external_data_required(historical_claims)
+    - missing_clause(payment_time)
+    - missing_required_entity(country_not_mentioned)
+    - missing_required_pattern(proporcion_percent)
     - vague_question
     """
 
@@ -205,7 +222,7 @@ class BaselineRAG:
         retrieved = _filter_noise(retrieved_raw)
         fuentes = [r.get("text", "") for r in retrieved]
 
-        # ✅ Gate 0: si todo era ruido (solo [PAGE x] o vacío)
+        # ✅ Gate 0: todo era ruido ([PAGE x] o vacío)
         if not retrieved:
             return {
                 "mode": "baseline",
@@ -234,7 +251,7 @@ class BaselineRAG:
         ctx = _join_text(retrieved)
         ctx_low = ctx.lower()
 
-        # ✅ Gate: preguntas vagas (portafolio: esto se ve MUY bien)
+        # ✅ Gate: preguntas vagas (en tu dataset, esto debería abstener)
         if _is_vague_question(question):
             return {
                 "mode": "baseline",
@@ -246,7 +263,7 @@ class BaselineRAG:
                 "gate_reason": "vague_question",
             }
 
-        # ✅ Gate: cyber (tu gate original)
+        # ✅ Gate: cyber
         cyber_q_terms = ["ciber", "cibern", "cyber", "ransom", "malware", "phishing", "ddos", "hack"]
         cyber_ctx_terms = cyber_q_terms + ["intrusión", "intrusion", "ataque", "ataques"]
         if _has_any(q, cyber_q_terms) and not _has_any(ctx_low, cyber_ctx_terms):
@@ -273,8 +290,7 @@ class BaselineRAG:
                 "gate_reason": "external_entity_question_gate",
             }
 
-        # ✅ Gate: email / teléfono / póliza / porcentajes específicos
-        # (esto corrige EXACTAMENTE tus v1_0031, v1_0032, v1_0033, v1_0037, etc.)
+        # ✅ Gate: patrones requeridos (email / teléfono / póliza / % cuota / % proporción)
         if _needs_email(question) and not _evidence_has_email(ctx):
             return {
                 "mode": "baseline",
@@ -320,7 +336,6 @@ class BaselineRAG:
             }
 
         if _needs_historical_claims(question):
-            # historial de siniestros no aparece en PDF normalmente
             return {
                 "mode": "baseline",
                 "respuesta": NO_EVIDENCE,
@@ -343,7 +358,6 @@ class BaselineRAG:
             }
 
         if _needs_country_coverage(question):
-            # si pregunta por Brasil y no aparece Brasil en contexto, abstén
             if "brasil" in q and "brasil" not in ctx_low:
                 return {
                     "mode": "baseline",
@@ -356,7 +370,6 @@ class BaselineRAG:
                 }
 
         if _needs_proporcion_percent(question):
-            # si piden % exacto y no hay un % cerca de “proporción indemnizable”
             if not _evidence_has_percent_near(ctx, "proporción") and not _evidence_has_percent_near(ctx, "proporcion"):
                 return {
                     "mode": "baseline",
@@ -371,7 +384,7 @@ class BaselineRAG:
         # ------------------------
         # Extractivo simple
         # ------------------------
-        bullets = []
+        bullets: List[str] = []
         for r in retrieved[: min(5, len(retrieved))]:
             t = (r.get("text") or "").strip()
             if not t:
