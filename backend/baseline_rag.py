@@ -9,7 +9,7 @@ from backend.baseline_store import BaselineStore
 logger = logging.getLogger(__name__)
 
 NO_EVIDENCE = "No se encontró evidencia suficiente en los documentos."
-BASELINE_VERSION = "robust_v4.4_2026-03-03"
+BASELINE_VERSION = "robust_v4.4.1_2026-03-03"
 
 # ---------------------------
 # Regex / Patterns
