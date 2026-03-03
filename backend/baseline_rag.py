@@ -58,7 +58,49 @@ def _max_score(retrieved: List[Dict[str, Any]]) -> float:
     return max(scores) if scores else 0.0
 
 # ---------------------------
-# Question Detection Gates
+# NEW: Conservative Gates
+# ---------------------------
+
+def _is_vague_question(q: str) -> bool:
+    ql = (q or "").lower()
+
+    # Preguntas típicamente "vagas" (en Fase 1 queremos abstener)
+    vague_patterns = [
+        "cómo funciona",
+        "como funciona",
+        "cuáles son las condiciones",
+        "cuales son las condiciones",
+        "qué cubre",
+        "que cubre",
+        "explique",
+        "describe",
+        "resumen",
+        "condiciones",
+        "funciona el seguro",
+        "cómo opera",
+        "como opera",
+    ]
+    return any(p in ql for p in vague_patterns)
+
+def _is_boilerplate(text: str) -> bool:
+    tl = (text or "").lower()
+
+    # Boilerplate/intro típico que NO debe gatillar respuesta en UNANSWERABLE
+    patterns = [
+        "inicio",
+        "se aclara",
+        "cláusulas indicadas",
+        "clausulas indicadas",
+        "condiciones generales",
+        "independientemente de",
+        "únicas que aplicarán",
+        "unicas que aplicaran",
+        "según el documento",
+    ]
+    return any(p in tl for p in patterns)
+
+# ---------------------------
+# Question Detection Gates (existing)
 # ---------------------------
 
 def _needs_policy_number(q: str) -> bool:
@@ -82,7 +124,7 @@ def _needs_drone_military_clause(q: str) -> bool:
     return ("drone" in ql or "drones" in ql) and "militar" in ql
 
 # ---------------------------
-# Evidence Checks
+# Evidence Checks (existing)
 # ---------------------------
 
 def _evidence_has_policy_number(ctx: str) -> bool:
@@ -169,11 +211,43 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
+        # Contexto
         ctx = _join_text(retrieved)
         ctx_low = ctx.lower()
 
         # ------------------------
-        # Abstention Gates
+        # NEW Conservative Gates
+        # ------------------------
+
+        # 1) Boilerplate top-1 => abstener (conservador)
+        top_text = (retrieved[0].get("text") or "").strip()
+        if _is_boilerplate(top_text):
+            return {
+                "mode": "baseline",
+                "respuesta": NO_EVIDENCE,
+                "fuentes": [],
+                "retrieved": retrieved,
+                "no_evidence": True,
+                "used_fallback": False,
+                "gate_reason": "boilerplate_context",
+                "baseline_version": BASELINE_VERSION,
+            }
+
+        # 2) Pregunta vaga => abstener (Fase 1 conservadora)
+        if _is_vague_question(question):
+            return {
+                "mode": "baseline",
+                "respuesta": NO_EVIDENCE,
+                "fuentes": [],
+                "retrieved": retrieved,
+                "no_evidence": True,
+                "used_fallback": False,
+                "gate_reason": "vague_question_gate",
+                "baseline_version": BASELINE_VERSION,
+            }
+
+        # ------------------------
+        # Existing Abstention Gates
         # ------------------------
 
         if _needs_policy_number(question) and not _evidence_has_policy_number(ctx):
@@ -256,6 +330,6 @@ class BaselineRAG:
             "retrieved": retrieved,
             "no_evidence": False,
             "used_fallback": False,
-            "gate_reason": None,
+            "gate_reason": "answered_extractively",
             "baseline_version": BASELINE_VERSION,
         }
