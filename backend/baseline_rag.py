@@ -9,20 +9,25 @@ from backend.baseline_store import BaselineStore
 logger = logging.getLogger(__name__)
 
 NO_EVIDENCE = "No se encontró evidencia suficiente en los documentos."
-
-
+BASELINE_VERSION = "robust_v3_debug_2026-03-03"
 # ---------------------------
-# Helpers / Gates
+# Regex / Patterns
 # ---------------------------
 
 EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
-# Teléfono “tolerante”: detecta secuencias razonables de dígitos (con espacios/guiones/paréntesis)
+
+# Teléfono tolerante: +57 300..., (55) 1234-5678, 01-800-..., etc.
 PHONE_RE = re.compile(r"(\+?\d[\d\s().-]{6,}\d)")
-# Póliza: algo tipo “póliza: ABC123…” o “No. de póliza …”
+
+# Póliza: “póliza: ABC123”, “No. de póliza ABC123”, “número de póliza XYZ-999”
 POLICY_RE = re.compile(
     r"(p[oó]liza|no\.?\s*de\s*p[oó]liza|n[uú]mero\s*de\s*p[oó]liza)\s*[:#]?\s*([A-Z0-9-]{4,})",
     re.IGNORECASE,
 )
+
+# ---------------------------
+# Helpers / Gates
+# ---------------------------
 
 
 def _has_any(text: str, terms: List[str]) -> bool:
@@ -42,7 +47,6 @@ def _filter_noise(retrieved: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             continue
         if _is_page_marker(txt):
             continue
-        # opcional: filtrar tabla de contenidos si te mete ruido (lo dejamos pasar por ahora)
         out.append(r)
     return out
 
@@ -63,6 +67,8 @@ def _max_score(retrieved: List[Dict[str, Any]]) -> float:
 
 def _is_vague_question(q: str) -> bool:
     ql = (q or "").strip().lower()
+
+    # Heurística: demasiado amplia / no accionable
     vague_patterns = [
         "¿cómo funciona",
         "como funciona",
@@ -74,8 +80,11 @@ def _is_vague_question(q: str) -> bool:
     ]
     if any(p in ql for p in vague_patterns):
         return True
+
+    # muy corta y genérica
     if len(ql) <= 18 and ("condiciones" in ql or "funciona" in ql):
         return True
+
     return False
 
 
@@ -91,12 +100,18 @@ def _needs_phone(q: str) -> bool:
 
 def _needs_policy_number(q: str) -> bool:
     ql = (q or "").lower()
-    return ("número de póliza" in ql) or ("numero de poliza" in ql) or ("no. de póliza" in ql) or ("no de póliza" in ql)
+    return (
+        ("número de póliza" in ql)
+        or ("numero de poliza" in ql)
+        or ("no. de póliza" in ql)
+        or ("no de póliza" in ql)
+        or ("nro de póliza" in ql)
+    )
 
 
 def _needs_percent_quota(q: str) -> bool:
     ql = (q or "").lower()
-    return ("cuota base" in ql) and ("%" in ql or "porcent" in ql)
+    return ("cuota base" in ql) and (("%" in ql) or ("porcent" in ql))
 
 
 def _needs_historical_claims(q: str) -> bool:
@@ -106,12 +121,12 @@ def _needs_historical_claims(q: str) -> bool:
 
 def _needs_indemnity_payment_time(q: str) -> bool:
     ql = (q or "").lower()
-    return ("tarda" in ql or "cuánto tiempo" in ql or "cuanto tiempo" in ql) and ("pagar" in ql or "pago" in ql) and ("indemn" in ql)
+    return (("tarda" in ql) or ("cuánto tiempo" in ql) or ("cuanto tiempo" in ql)) and ("pagar" in ql or "pago" in ql) and ("indemn" in ql)
 
 
 def _needs_country_coverage(q: str) -> bool:
     ql = (q or "").lower()
-    return "cubre" in ql and ("brasil" in ql or "argentina" in ql or "chile" in ql or "perú" in ql or "peru" in ql)
+    return ("cubre" in ql) and any(c in ql for c in ["brasil", "argentina", "chile", "perú", "peru", "colombia", "méxico", "mexico"])
 
 
 def _needs_proporcion_percent(q: str) -> bool:
@@ -146,7 +161,7 @@ def _evidence_has_percent_near(ctx: str, keyword: str, window: int = 80) -> bool
     start = max(0, i - window)
     end = min(len(ctx), i + window)
     span = ctx[start:end]
-    return "%" in span or "porcent" in span.lower()
+    return ("%" in span) or ("porcent" in span.lower())
 
 
 class BaselineRAG:
@@ -158,8 +173,8 @@ class BaselineRAG:
     Gates (robustos):
     - empty_question
     - no_hits (real)
-    - no_signal(all_noise)
-    - no_signal(score<=0)
+    - no_signal (BM25 sin señal: scores ~ 0 o todo ruido)
+    - vague_question
     - required_topic_missing(cyber)
     - external_entity_question_gate
     - missing_required_pattern(email/phone/policy/percent/etc.)
@@ -167,7 +182,6 @@ class BaselineRAG:
     - missing_clause(payment_time)
     - missing_required_entity(country_not_mentioned)
     - missing_required_pattern(proporcion_percent)
-    - vague_question
     """
 
     def __init__(self, pdf_path: str, debug: bool = False, k: int = 5):
@@ -204,6 +218,7 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "empty_question",
+                "baseline_version": BASELINE_VERSION,
             }
 
         hits: List[Tuple[Any, float]] = self.store.search(question, k=self.k)
@@ -216,13 +231,14 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "no_hits",
+                "baseline_version": BASELINE_VERSION,
             }
 
         retrieved_raw = self._hits_to_retrieved(hits)
         retrieved = _filter_noise(retrieved_raw)
         fuentes = [r.get("text", "") for r in retrieved]
 
-        # ✅ Gate 0: todo era ruido ([PAGE x] o vacío)
+        # Gate: todo era ruido
         if not retrieved:
             return {
                 "mode": "baseline",
@@ -232,10 +248,11 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "no_signal(all_noise)",
+                "baseline_version": BASELINE_VERSION,
             }
 
-        # ✅ Gate 1: BM25 sin señal (scores 0 o casi 0)
-        # Ajusta umbral si quieres: 0.0 / 0.05 / 0.1 según tu PDF.
+        # Gate: BM25 sin señal
+        # OJO: rank_bm25 puede dar 0 para muchas queries. Si te queda muy agresivo, cambia a <= 0.05
         if _max_score(retrieved) <= 0.0:
             return {
                 "mode": "baseline",
@@ -245,13 +262,14 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "no_signal(score<=0)",
+                "baseline_version": BASELINE_VERSION,
             }
 
         q = question.lower()
         ctx = _join_text(retrieved)
         ctx_low = ctx.lower()
 
-        # ✅ Gate: preguntas vagas (en tu dataset, esto debería abstener)
+        # Gate: pregunta vaga
         if _is_vague_question(question):
             return {
                 "mode": "baseline",
@@ -261,9 +279,10 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "vague_question",
+                "baseline_version": BASELINE_VERSION,
             }
 
-        # ✅ Gate: cyber
+        # Gate: cyber
         cyber_q_terms = ["ciber", "cibern", "cyber", "ransom", "malware", "phishing", "ddos", "hack"]
         cyber_ctx_terms = cyber_q_terms + ["intrusión", "intrusion", "ataque", "ataques"]
         if _has_any(q, cyber_q_terms) and not _has_any(ctx_low, cyber_ctx_terms):
@@ -275,9 +294,10 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "required_topic_missing(cyber)",
+                "baseline_version": BASELINE_VERSION,
             }
 
-        # ✅ Gate: entidad externa (CEO, etc.)
+        # Gate: entidad externa
         external_terms = ["ceo", "director general", "presidente", "owner", "propietario", "gerente general"]
         if _has_any(q, external_terms):
             return {
@@ -288,9 +308,10 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "external_entity_question_gate",
+                "baseline_version": BASELINE_VERSION,
             }
 
-        # ✅ Gate: patrones requeridos (email / teléfono / póliza / % cuota / % proporción)
+        # Gate: email
         if _needs_email(question) and not _evidence_has_email(ctx):
             return {
                 "mode": "baseline",
@@ -300,8 +321,10 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "missing_required_pattern(email)",
+                "baseline_version": BASELINE_VERSION,
             }
 
+        # Gate: phone
         if _needs_phone(question) and not _evidence_has_phone(ctx):
             return {
                 "mode": "baseline",
@@ -311,8 +334,10 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "missing_required_pattern(phone)",
+                "baseline_version": BASELINE_VERSION,
             }
 
+        # Gate: policy number
         if _needs_policy_number(question) and not _evidence_has_policy_number(ctx):
             return {
                 "mode": "baseline",
@@ -322,8 +347,10 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "missing_required_pattern(policy_number)",
+                "baseline_version": BASELINE_VERSION,
             }
 
+        # Gate: cuota base porcentual
         if _needs_percent_quota(question) and not _evidence_has_percent_near(ctx, "cuota"):
             return {
                 "mode": "baseline",
@@ -333,8 +360,10 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "missing_required_pattern(percent_quota)",
+                "baseline_version": BASELINE_VERSION,
             }
 
+        # Gate: siniestros últimos 12 meses (dato externo)
         if _needs_historical_claims(question):
             return {
                 "mode": "baseline",
@@ -344,8 +373,10 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "external_data_required(historical_claims)",
+                "baseline_version": BASELINE_VERSION,
             }
 
+        # Gate: tiempo de pago indemnización (cláusula usualmente no está)
         if _needs_indemnity_payment_time(question):
             return {
                 "mode": "baseline",
@@ -355,8 +386,10 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "missing_clause(payment_time)",
+                "baseline_version": BASELINE_VERSION,
             }
 
+        # Gate: cobertura por país específico (si país no aparece, abstener)
         if _needs_country_coverage(question):
             if "brasil" in q and "brasil" not in ctx_low:
                 return {
@@ -367,8 +400,10 @@ class BaselineRAG:
                     "no_evidence": True,
                     "used_fallback": False,
                     "gate_reason": "missing_required_entity(country_not_mentioned)",
+                    "baseline_version": BASELINE_VERSION,
                 }
 
+        # Gate: porcentaje exacto de proporción indemnizable
         if _needs_proporcion_percent(question):
             if not _evidence_has_percent_near(ctx, "proporción") and not _evidence_has_percent_near(ctx, "proporcion"):
                 return {
@@ -379,10 +414,11 @@ class BaselineRAG:
                     "no_evidence": True,
                     "used_fallback": False,
                     "gate_reason": "missing_required_pattern(proporcion_percent)",
+                    "baseline_version": BASELINE_VERSION,
                 }
 
         # ------------------------
-        # Extractivo simple
+        # Extractivo simple (no inventa)
         # ------------------------
         bullets: List[str] = []
         for r in retrieved[: min(5, len(retrieved))]:
@@ -400,6 +436,7 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "no_signal(no_bullets)",
+                "baseline_version": BASELINE_VERSION,
             }
 
         respuesta = "Según el documento, lo más relevante es:\n" + "\n".join(bullets)
@@ -412,4 +449,5 @@ class BaselineRAG:
             "no_evidence": False,
             "used_fallback": False,
             "gate_reason": None,
+            "baseline_version": BASELINE_VERSION,
         }
