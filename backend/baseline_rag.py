@@ -9,7 +9,7 @@ from backend.baseline_store import BaselineStore
 logger = logging.getLogger(__name__)
 
 NO_EVIDENCE = "No se encontró evidencia suficiente en los documentos."
-BASELINE_VERSION = "robust_v4.4.3_2026-03-03"
+BASELINE_VERSION = "robust_v4.4.4_2026-03-03"
 
 # ---------------------------
 # Regex / Patterns
@@ -31,9 +31,10 @@ TIME_RE = re.compile(
 )
 
 # Percent (incluye % unicode fullwidth ％)
-PERCENT_ANY_RE = re.compile(r"\b\d{1,3}\s*[%％]\b")
-PERCENT_WORD_RE = re.compile(r"\b\d{1,3}\s*por\s*ciento\b", re.IGNORECASE)
-
+# match "60%", "60 %", "60％", y no depende de word-boundary después del símbolo
+# match "60%", "60 %", "60％" y NO depende de word-boundary después del símbolo
+PERCENT_ANY_RE = re.compile(r"(?<!\d)\d{1,3}\s*[%％]")
+PERCENT_WORD_RE = re.compile(r"(?<!\d)\d{1,3}\s*por\s+ciento\b", re.IGNORECASE)
 # ---------------------------
 # Helper Functions
 # ---------------------------
