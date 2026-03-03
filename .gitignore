@@ -28,3 +28,7 @@ Thumbs.db
 # Build
 frontend/build/
 
+
+# eval outputs
+eval/runs/
+
