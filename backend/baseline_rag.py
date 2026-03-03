@@ -289,10 +289,13 @@ def _evidence_has_phone(ctx: str) -> bool:
 def _evidence_has_percent(ctx: str) -> bool:
     if not ctx:
         return False
-    if PERCENT_RE.search(ctx):
+    # acepta "60%" o "60 %"
+    if re.search(r"\b\d{1,3}\s*%\b", ctx):
         return True
-    return bool(POR_CIENTO_RE.search(ctx))
-
+    # acepta "60 por ciento"
+    if re.search(r"\b\d{1,3}\s*por\s*ciento\b", ctx, re.IGNORECASE):
+        return True
+    return False
 def _evidence_has_percent_near_proportion(retrieved_texts: List[str]) -> bool:
     """
     Para “proporción indemnizable”, exigir que el % aparezca
