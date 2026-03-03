@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-from typing import Dict, Any, List, Tuple
 import logging
 import re
+from typing import Any, Dict, List, Tuple
 
 from backend.baseline_store import BaselineStore
 
 logger = logging.getLogger(__name__)
 
 NO_EVIDENCE = "No se encontró evidencia suficiente en los documentos."
-BASELINE_VERSION = "robust_v4_2026-03-03"
+BASELINE_VERSION = "robust_v4.2_2026-03-03"
 
 # ---------------------------
 # Regex / Patterns
 # ---------------------------
 
-EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
+EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 PHONE_RE = re.compile(r"(\+?\d[\d\s().-]{6,}\d)")
 POLICY_RE = re.compile(
     r"(p[oó]liza|no\.?\s*de\s*p[oó]liza|n[uú]mero\s*de\s*p[oó]liza)\s*[:#]?\s*([A-Z0-9-]{4,})",
@@ -35,7 +35,7 @@ def _is_page_marker(s: str) -> bool:
     return bool(re.fullmatch(r"\[PAGE\s+\d+\]", (s or "").strip(), re.IGNORECASE))
 
 def _filter_noise(retrieved: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    out = []
+    out: List[Dict[str, Any]] = []
     for r in retrieved or []:
         txt = (r.get("text") or "").strip()
         if not txt:
@@ -48,23 +48,12 @@ def _filter_noise(retrieved: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def _join_text(retrieved: List[Dict[str, Any]]) -> str:
     return " ".join([(r.get("text") or "") for r in retrieved or []])
 
-def _max_score(retrieved: List[Dict[str, Any]]) -> float:
-    scores = []
-    for r in retrieved or []:
-        try:
-            scores.append(float(r.get("score", 0.0)))
-        except Exception:
-            pass
-    return max(scores) if scores else 0.0
-
 # ---------------------------
-# NEW: Conservative Gates
+# Conservative Gates (refined)
 # ---------------------------
 
 def _is_vague_question(q: str) -> bool:
     ql = (q or "").lower()
-
-    # Preguntas típicamente "vagas" (en Fase 1 queremos abstener)
     vague_patterns = [
         "cómo funciona",
         "como funciona",
@@ -83,9 +72,11 @@ def _is_vague_question(q: str) -> bool:
     return any(p in ql for p in vague_patterns)
 
 def _is_boilerplate(text: str) -> bool:
+    """
+    OJO: esto NO debe disparar abstención si hay anclas de evidencia.
+    Solo sirve como señal de "intro/boilerplate".
+    """
     tl = (text or "").lower()
-
-    # Boilerplate/intro típico que NO debe gatillar respuesta en UNANSWERABLE
     patterns = [
         "inicio",
         "se aclara",
@@ -95,12 +86,39 @@ def _is_boilerplate(text: str) -> bool:
         "independientemente de",
         "únicas que aplicarán",
         "unicas que aplicaran",
-        "según el documento",
+        # Nota: NO incluyas "según el documento" aquí; eso lo generas tú en la respuesta.
     ]
     return any(p in tl for p in patterns)
 
+# Lista de anclas (evidencia fuerte) para NO abstener por vague/boilerplate
+ANCHORS = [
+    # pagos / primas
+    "prima", "factura", "pago", "mensual", "mínima", "minima",
+
+    # límites / montos
+    "límite", "limite", "máximo", "maximo", "usd", "mxn", "$", "%",
+
+    # cobertura / exclusiones / condiciones específicas
+    "cobertura", "exclus", "deducible", "suma asegurada", "vigencia",
+    "responsabilidad", "indemn", "reclam", "siniestro", "aviso", "procedimiento",
+    "documentos", "obligaciones",
+
+    # seguridad / riesgo
+    "requisitos", "obligatorios", "escolta", "monitoreo", "riesgo", "vrdlm",
+
+    # cláusulas
+    "cláusula", "clausula", "siniestralidad",
+
+    # entidades/temas concretos del PDF
+    "uber", "cabify", "hongos", "plagas", "buque", "años", "antigüedad", "antiguedad",
+]
+
+def _has_anchor(ctx: str) -> bool:
+    cl = (ctx or "").lower()
+    return any(a in cl for a in ANCHORS)
+
 # ---------------------------
-# Question Detection Gates (existing)
+# Existing Question Detection Gates
 # ---------------------------
 
 def _needs_policy_number(q: str) -> bool:
@@ -142,19 +160,18 @@ def _evidence_has_reporting_days(ctx: str) -> bool:
 # ---------------------------
 
 class BaselineRAG:
-
     def __init__(self, pdf_path: str, debug: bool = False, k: int = 5):
         self.pdf_path = pdf_path
         self.debug = debug
-        self.k = k
+        self.k = int(k)
 
         self.store = BaselineStore(pdf_path=self.pdf_path)
         self.store.build_or_load()
 
-        logger.info("🟦 BaselineRAG listo (BM25 inicializado).")
+        logger.info("🟦 BaselineRAG listo | BM25 inicializado | k=%s | version=%s", self.k, BASELINE_VERSION)
 
     def _hits_to_retrieved(self, hits: List[Tuple[Any, float]]) -> List[Dict[str, Any]]:
-        retrieved = []
+        retrieved: List[Dict[str, Any]] = []
         for (c, s) in hits:
             retrieved.append(
                 {
@@ -167,7 +184,6 @@ class BaselineRAG:
         return retrieved
 
     def ask(self, question: str) -> Dict[str, Any]:
-
         question = (question or "").strip()
 
         if not question:
@@ -211,17 +227,18 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Contexto
+        # Contexto (top-k)
         ctx = _join_text(retrieved)
         ctx_low = ctx.lower()
 
         # ------------------------
-        # NEW Conservative Gates
+        # Conservative Gates (refined with anchors)
         # ------------------------
 
-        # 1) Boilerplate top-1 => abstener (conservador)
         top_text = (retrieved[0].get("text") or "").strip()
-        if _is_boilerplate(top_text):
+
+        # Boilerplate: SOLO abstener si además NO hay ancla (si hay ancla, es evidencia útil)
+        if _is_boilerplate(top_text) and not _has_anchor(ctx):
             return {
                 "mode": "baseline",
                 "respuesta": NO_EVIDENCE,
@@ -229,12 +246,12 @@ class BaselineRAG:
                 "retrieved": retrieved,
                 "no_evidence": True,
                 "used_fallback": False,
-                "gate_reason": "boilerplate_context",
+                "gate_reason": "boilerplate_no_anchor",
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # 2) Pregunta vaga => abstener (Fase 1 conservadora)
-        if _is_vague_question(question):
+        # Pregunta vaga: SOLO abstener si NO hay ancla en el contexto
+        if _is_vague_question(question) and not _has_anchor(ctx):
             return {
                 "mode": "baseline",
                 "respuesta": NO_EVIDENCE,
@@ -242,7 +259,7 @@ class BaselineRAG:
                 "retrieved": retrieved,
                 "no_evidence": True,
                 "used_fallback": False,
-                "gate_reason": "vague_question_gate",
+                "gate_reason": "vague_question_no_anchor",
                 "baseline_version": BASELINE_VERSION,
             }
 
@@ -300,14 +317,17 @@ class BaselineRAG:
                 }
 
         # ------------------------
-        # Extractive Response
+        # Extractive Response (default)
         # ------------------------
 
-        bullets = []
+        bullets: List[str] = []
         for r in retrieved[:5]:
             t = (r.get("text") or "").strip()
-            if t:
-                bullets.append(f"- {t}")
+            if not t:
+                continue
+            if _is_page_marker(t):
+                continue
+            bullets.append(f"- {t}")
 
         if not bullets:
             return {
@@ -326,7 +346,7 @@ class BaselineRAG:
         return {
             "mode": "baseline",
             "respuesta": respuesta,
-            "fuentes": [r.get("text", "") for r in retrieved],
+            "fuentes": [r.get("text", "") for r in retrieved[:5]],
             "retrieved": retrieved,
             "no_evidence": False,
             "used_fallback": False,
