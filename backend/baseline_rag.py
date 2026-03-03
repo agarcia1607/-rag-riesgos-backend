@@ -9,7 +9,7 @@ from backend.baseline_store import BaselineStore
 logger = logging.getLogger(__name__)
 
 NO_EVIDENCE = "No se encontró evidencia suficiente en los documentos."
-BASELINE_VERSION = "robust_v4.4.2_2026-03-03"
+BASELINE_VERSION = "robust_v4.4.3_2026-03-03"
 
 # ---------------------------
 # Regex / Patterns
@@ -23,9 +23,6 @@ POLICY_RE = re.compile(
     r"(p[oó]liza|no\.?\s*de\s*p[oó]liza|n[uú]mero\s*de\s*p[oó]liza)\s*[:#]?\s*([A-Z0-9-]{4,})",
     re.IGNORECASE,
 )
-
-# token candidato a “ID de póliza” (más permisivo, pero SOLO se usa cuando el query lo exige)
-POLICY_ID_RE = re.compile(r"\b[A-Z0-9][A-Z0-9-]{5,}\b")
 
 DAYS_RE = re.compile(r"\b(\d{1,3})\s*(d[ií]as|d[ií]a)\b", re.IGNORECASE)
 TIME_RE = re.compile(
@@ -96,7 +93,6 @@ def _is_vague_question(q: str) -> bool:
 def _is_hard_vague(q: str) -> bool:
     """
     Vagas “duras” que en Fase 1 baseline-first deben abstener
-    salvo que exista una sección claramente útil en el contexto.
     """
     ql = (q or "").strip().lower()
     hard = {
@@ -189,31 +185,6 @@ def _has_anchor(ctx: str) -> bool:
     return any(a in cl for a in ANCHORS)
 
 
-def _has_useful_section(ctx: str) -> bool:
-    """
-    Señales de que realmente hay una sección accionable (no solo una lista o intro):
-    - Procedimiento / aviso / reclamación
-    - Cobertura / exclusiones / deducible / suma asegurada
-    """
-    cl = (ctx or "").lower()
-    section_terms = [
-        "procedimiento",
-        "en caso de siniestro",
-        "aviso",
-        "reclamación",
-        "reclamacion",
-        "cobertura",
-        "exclusiones",
-        "exclusión",
-        "exclusion",
-        "deducible",
-        "suma asegurada",
-        "vigencia",
-        "obligaciones",
-    ]
-    return any(t in cl for t in section_terms)
-
-
 # ---------------------------
 # Question Detection Gates
 # ---------------------------
@@ -234,13 +205,7 @@ def _needs_reporting_days(q: str) -> bool:
     return (
         ("cuántos días" in ql or "cuantos dias" in ql or "días tiene" in ql or "dias tiene" in ql)
         and ("report" in ql or "avis" in ql)
-        and "siniestro" in ql
     )
-
-
-def _needs_reporting_days_for_damages(q: str) -> bool:
-    ql = (q or "").lower()
-    return _needs_reporting_days(q) and ("daños" in ql or "danos" in ql or "no robo" in ql or "no asalto" in ql)
 
 
 def _needs_time_to_pay(q: str) -> bool:
@@ -307,44 +272,6 @@ def _mentions_country_outside_scope(q: str) -> str:
 # Evidence Checks
 # ---------------------------
 
-def _evidence_has_policy_number(ctx: str) -> bool:
-    return bool(POLICY_RE.search(ctx or ""))
-
-
-def _evidence_has_policy_id_anywhere(retrieved_texts: List[str]) -> bool:
-    """
-    Para “número de póliza específico”: exige un ID con pinta de póliza en algún chunk.
-    """
-    for t in retrieved_texts:
-        tl = (t or "").lower()
-        if "póliza" in tl or "poliza" in tl:
-            if POLICY_RE.search(t) or POLICY_ID_RE.search(t):
-                for m in POLICY_ID_RE.finditer(t):
-                    tok = m.group(0)
-                    if tok.upper() in {"USD", "MXN"}:
-                        continue
-                    digits = re.sub(r"\D", "", tok)
-                    if len(digits) >= 6 or ("-" in tok and len(tok) >= 7):
-                        return True
-    return False
-
-
-def _evidence_has_reporting_days(ctx: str) -> bool:
-    if not ctx:
-        return False
-    cl = ctx.lower()
-    if ("report" not in cl) and ("avis" not in cl):
-        return False
-    return bool(DAYS_RE.search(ctx))
-
-
-def _evidence_has_reporting_days_for_damages(ctx: str) -> bool:
-    if not _evidence_has_reporting_days(ctx):
-        return False
-    cl = (ctx or "").lower()
-    return ("daños" in cl or "danos" in cl or "no robo" in cl or "no asalto" in cl or "daño" in cl or "dano" in cl)
-
-
 def _evidence_has_email(ctx: str) -> bool:
     return bool(EMAIL_RE.search(ctx or ""))
 
@@ -361,7 +288,7 @@ def _evidence_has_phone(ctx: str) -> bool:
 
 def _evidence_has_percent_in_retrieved(retrieved: List[Dict[str, Any]]) -> bool:
     """
-    IMPORTANT: chequea directamente en los chunks retrieved (no en ctx),
+    Chequea directamente en los chunks retrieved (no en ctx),
     para evitar bugs de join/encoding y soportar % unicode.
     """
     if not retrieved:
@@ -398,6 +325,19 @@ def _evidence_has_time(ctx: str) -> bool:
 
 def _evidence_mentions(term: str, ctx: str) -> bool:
     return bool(term) and (term.lower() in (ctx or "").lower())
+
+
+def _evidence_has_reporting_days(ctx: str) -> bool:
+    """
+    Si la pregunta pide "¿cuántos días...?" exige que aparezca un patrón "X días"
+    y que el contexto tenga señales de reportar/avisar.
+    """
+    if not ctx:
+        return False
+    cl = ctx.lower()
+    if ("report" not in cl) and ("avis" not in cl):
+        return False
+    return bool(DAYS_RE.search(ctx))
 
 
 # ---------------------------
@@ -519,7 +459,7 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Porcentaje general requerido (FIX: chequear en retrieved)
+        # Porcentaje general requerido (chequear en retrieved)
         if _needs_percent(question) and not _evidence_has_percent_in_retrieved(retrieved):
             return {
                 "mode": "baseline",
@@ -545,22 +485,20 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Número de póliza específico: exige ID real (no basta mencionar póliza)
-        if _needs_policy_number(question):
-            if not _evidence_has_policy_number(ctx):
-                if not _evidence_has_policy_id_anywhere(texts):
-                    return {
-                        "mode": "baseline",
-                        "respuesta": NO_EVIDENCE,
-                        "fuentes": [],
-                        "retrieved": retrieved,
-                        "no_evidence": True,
-                        "used_fallback": False,
-                        "gate_reason": "missing_required_pattern(policy_id)",
-                        "baseline_version": BASELINE_VERSION,
-                    }
+        # Número de póliza específico: exige mención explícita (no basta mencionar póliza)
+        if _needs_policy_number(question) and not POLICY_RE.search(ctx):
+            return {
+                "mode": "baseline",
+                "respuesta": NO_EVIDENCE,
+                "fuentes": [],
+                "retrieved": retrieved,
+                "no_evidence": True,
+                "used_fallback": False,
+                "gate_reason": "missing_required_pattern(policy_number)",
+                "baseline_version": BASELINE_VERSION,
+            }
 
-        # Reporte de siniestro: días
+        # Reporte de siniestro: días (exige "X días")
         if _needs_reporting_days(question) and not _evidence_has_reporting_days(ctx):
             return {
                 "mode": "baseline",
@@ -570,19 +508,6 @@ class BaselineRAG:
                 "no_evidence": True,
                 "used_fallback": False,
                 "gate_reason": "missing_required_pattern(reporting_days)",
-                "baseline_version": BASELINE_VERSION,
-            }
-
-        # Reporte de siniestro por daños (no robo)
-        if _needs_reporting_days_for_damages(question) and not _evidence_has_reporting_days_for_damages(ctx):
-            return {
-                "mode": "baseline",
-                "respuesta": NO_EVIDENCE,
-                "fuentes": [],
-                "retrieved": retrieved,
-                "no_evidence": True,
-                "used_fallback": False,
-                "gate_reason": "missing_required_pattern(reporting_days_damages)",
                 "baseline_version": BASELINE_VERSION,
             }
 
@@ -645,8 +570,8 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Vague “hard”: SOLO responder si hay una sección útil clara
-        if _is_hard_vague(question) and not _has_useful_section(ctx):
+        # Vague “hard”: en Fase 1 SIEMPRE abstener
+        if _is_hard_vague(question):
             return {
                 "mode": "baseline",
                 "respuesta": NO_EVIDENCE,
@@ -654,7 +579,7 @@ class BaselineRAG:
                 "retrieved": retrieved,
                 "no_evidence": True,
                 "used_fallback": False,
-                "gate_reason": "hard_vague_no_section",
+                "gate_reason": "hard_vague_question",
                 "baseline_version": BASELINE_VERSION,
             }
 
