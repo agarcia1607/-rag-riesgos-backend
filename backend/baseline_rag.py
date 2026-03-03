@@ -19,12 +19,27 @@ EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
 # Teléfono tolerante: +57 300..., (55) 1234-5678, 01-800-..., etc.
 PHONE_RE = re.compile(r"(\+?\d[\d\s().-]{6,}\d)")
 
-# Póliza: “póliza: ABC123”, “No. de póliza ABC123”, “número de póliza XYZ-999”
+# “número/no./# de póliza: ABC-12345” (pero NO “póliza E-CARGO”)
 POLICY_RE = re.compile(
-    r"(p[oó]liza|no\.?\s*de\s*p[oó]liza|n[uú]mero\s*de\s*p[oó]liza)\s*[:#]?\s*([A-Z0-9-]{4,})",
+    r"(no\.?\s*(de)?\s*p[oó]liza|n[uú]mero\s*de\s*p[oó]liza|p[oó]liza\s*(no\.?|n[uú]m\.?|#))\s*[:#]?\s*([A-Z0-9][A-Z0-9-]{3,})",
     re.IGNORECASE,
 )
 
+def _evidence_has_policy_number(ctx: str) -> bool:
+    """
+    True solo si detecta un identificador de póliza con al menos 1 dígito.
+    Evita falsos positivos tipo “póliza E-CARGO”.
+    """
+    if not ctx:
+        return False
+
+    for m in POLICY_RE.finditer(ctx):
+        pol = (m.group(4) or "").strip()
+        # exigir al menos un dígito => “E-CARGO” falla, “EC-12345” pasa
+        if re.search(r"\d", pol):
+            return True
+
+    return False
 # ---------------------------
 # Helpers / Gates
 # ---------------------------
