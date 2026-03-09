@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
-from backend.baseline_store import BaselineStore
+from backend.retrievers.factory import build_retriever
 
 logger = logging.getLogger(__name__)
 
 NO_EVIDENCE = "No se encontró evidencia suficiente en los documentos."
-BASELINE_VERSION = "robust_v4.4.4_2026-03-03"
+BASELINE_VERSION = "robust_v5_2026-03-09"
 
 # ---------------------------
 # Regex / Patterns
@@ -18,7 +18,6 @@ BASELINE_VERSION = "robust_v4.4.4_2026-03-03"
 EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 PHONE_RE = re.compile(r"(\+?\d[\d\s().-]{6,}\d)")
 
-# “póliza: ABC-123…” (si existe explícito)
 POLICY_RE = re.compile(
     r"(p[oó]liza|no\.?\s*de\s*p[oó]liza|n[uú]mero\s*de\s*p[oó]liza)\s*[:#]?\s*([A-Z0-9-]{4,})",
     re.IGNORECASE,
@@ -30,11 +29,10 @@ TIME_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Percent (incluye % unicode fullwidth ％)
-# match "60%", "60 %", "60％", y no depende de word-boundary después del símbolo
-# match "60%", "60 %", "60％" y NO depende de word-boundary después del símbolo
 PERCENT_ANY_RE = re.compile(r"(?<!\d)\d{1,3}\s*[%％]")
 PERCENT_WORD_RE = re.compile(r"(?<!\d)\d{1,3}\s*por\s+ciento\b", re.IGNORECASE)
+
+
 # ---------------------------
 # Helper Functions
 # ---------------------------
@@ -92,9 +90,6 @@ def _is_vague_question(q: str) -> bool:
 
 
 def _is_hard_vague(q: str) -> bool:
-    """
-    Vagas “duras” que en Fase 1 baseline-first deben abstener
-    """
     ql = (q or "").strip().lower()
     hard = {
         "¿cómo funciona el seguro?",
@@ -128,7 +123,6 @@ def _is_boilerplate(text: str) -> bool:
     return any(p in tl for p in patterns)
 
 
-# Anclas: ayudan a NO abstener por boilerplate/vague (pero no son suficientes para “hard vague”)
 ANCHORS = [
     "prima",
     "factura",
@@ -288,10 +282,6 @@ def _evidence_has_phone(ctx: str) -> bool:
 
 
 def _evidence_has_percent_in_retrieved(retrieved: List[Dict[str, Any]]) -> bool:
-    """
-    Chequea directamente en los chunks retrieved (no en ctx),
-    para evitar bugs de join/encoding y soportar % unicode.
-    """
     if not retrieved:
         return False
     for r in retrieved:
@@ -306,10 +296,6 @@ def _evidence_has_percent_in_retrieved(retrieved: List[Dict[str, Any]]) -> bool:
 
 
 def _evidence_has_percent_near_proportion(retrieved_texts: List[str]) -> bool:
-    """
-    Para “proporción indemnizable”, exigir que el % aparezca
-    en el MISMO chunk donde aparece 'propor' o 'indemniz'.
-    """
     for t in retrieved_texts:
         tl = (t or "").lower()
         if ("propor" in tl or "indemniz" in tl):
@@ -329,10 +315,6 @@ def _evidence_mentions(term: str, ctx: str) -> bool:
 
 
 def _evidence_has_reporting_days(ctx: str) -> bool:
-    """
-    Si la pregunta pide "¿cuántos días...?" exige que aparezca un patrón "X días"
-    y que el contexto tenga señales de reportar/avisar.
-    """
     if not ctx:
         return False
     cl = ctx.lower()
@@ -351,23 +333,8 @@ class BaselineRAG:
         self.debug = debug
         self.k = int(k)
 
-        self.store = BaselineStore(pdf_path=self.pdf_path)
-        self.store.build_or_load()
-
+        self.retriever = build_retriever()
         logger.info("🟦 BaselineRAG listo | BM25 | k=%s | version=%s", self.k, BASELINE_VERSION)
-
-    def _hits_to_retrieved(self, hits: List[Tuple[Any, float]]) -> List[Dict[str, Any]]:
-        retrieved: List[Dict[str, Any]] = []
-        for (c, s) in hits:
-            retrieved.append(
-                {
-                    "chunk_id": getattr(c, "chunk_id", None),
-                    "score": float(s),
-                    "metadata": getattr(c, "metadata", {}) or {},
-                    "text": getattr(c, "text", str(c)),
-                }
-            )
-        return retrieved
 
     def ask(self, question: str) -> Dict[str, Any]:
         question = (question or "").strip()
@@ -384,9 +351,9 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        hits = self.store.search(question, k=self.k)
+        retrieved_raw = self.retriever.retrieve(question, k=self.k)
 
-        if not hits:
+        if not retrieved_raw:
             return {
                 "mode": "baseline",
                 "respuesta": NO_EVIDENCE,
@@ -398,7 +365,6 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        retrieved_raw = self._hits_to_retrieved(hits)
         retrieved = _filter_noise(retrieved_raw)
 
         if not retrieved:
@@ -417,11 +383,6 @@ class BaselineRAG:
         ctx_low = ctx.lower()
         texts = _retrieved_texts(retrieved)
 
-        # ------------------------
-        # Required-pattern gates (exact info)
-        # ------------------------
-
-        # Histórico externo: por definición no está en el PDF
         if _is_historical_external(question):
             return {
                 "mode": "baseline",
@@ -434,7 +395,6 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Email requerido
         if _needs_email(question) and not _evidence_has_email(ctx):
             return {
                 "mode": "baseline",
@@ -447,7 +407,6 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Teléfono requerido
         if _needs_phone(question) and not _evidence_has_phone(ctx):
             return {
                 "mode": "baseline",
@@ -460,7 +419,6 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Porcentaje general requerido (chequear en retrieved)
         if _needs_percent(question) and not _evidence_has_percent_in_retrieved(retrieved):
             return {
                 "mode": "baseline",
@@ -473,7 +431,6 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Porcentaje “proporción indemnizable” (más estricto: % debe estar cerca)
         if _needs_percent_proportion_indemnizable(question) and not _evidence_has_percent_near_proportion(texts):
             return {
                 "mode": "baseline",
@@ -486,7 +443,6 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Número de póliza específico: exige mención explícita (no basta mencionar póliza)
         if _needs_policy_number(question) and not POLICY_RE.search(ctx):
             return {
                 "mode": "baseline",
@@ -499,7 +455,6 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Reporte de siniestro: días (exige "X días")
         if _needs_reporting_days(question) and not _evidence_has_reporting_days(ctx):
             return {
                 "mode": "baseline",
@@ -512,7 +467,6 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Tiempo de pago de indemnización
         if _needs_time_to_pay(question) and not _evidence_has_time(ctx):
             return {
                 "mode": "baseline",
@@ -525,7 +479,6 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # País fuera del alcance
         country = _mentions_country_outside_scope(question)
         if country and not _evidence_mentions(country, ctx):
             return {
@@ -539,7 +492,6 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Endoso/tema específico 5G
         if _needs_5g_endorsement(question) and ("5g" not in ctx_low):
             return {
                 "mode": "baseline",
@@ -552,13 +504,8 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # ------------------------
-        # Conservative gates (boilerplate/vague)
-        # ------------------------
-
         top_text = (retrieved[0].get("text") or "").strip()
 
-        # Boilerplate: SOLO abstener si NO hay ancla
         if _is_boilerplate(top_text) and not _has_anchor(ctx):
             return {
                 "mode": "baseline",
@@ -571,7 +518,6 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Vague “hard”: en Fase 1 SIEMPRE abstener
         if _is_hard_vague(question):
             return {
                 "mode": "baseline",
@@ -584,7 +530,6 @@ class BaselineRAG:
                 "baseline_version": BASELINE_VERSION,
             }
 
-        # Vague normal: SOLO abstener si NO hay ancla
         if _is_vague_question(question) and not _has_anchor(ctx):
             return {
                 "mode": "baseline",
@@ -596,10 +541,6 @@ class BaselineRAG:
                 "gate_reason": "vague_question_no_anchor",
                 "baseline_version": BASELINE_VERSION,
             }
-
-        # ------------------------
-        # Existing Abstention Gates (topics/entities)
-        # ------------------------
 
         if _needs_specific_ship(question) and "libertador" not in ctx_low:
             return {
@@ -625,10 +566,6 @@ class BaselineRAG:
                     "gate_reason": "missing_required_topic(drones_military)",
                     "baseline_version": BASELINE_VERSION,
                 }
-
-        # ------------------------
-        # Extractive Response (default)
-        # ------------------------
 
         bullets: List[str] = []
         for r in retrieved[:5]:

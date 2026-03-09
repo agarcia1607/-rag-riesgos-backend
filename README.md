@@ -1,91 +1,119 @@
-# RAG de Análisis de Riesgos
+# RAG Risk Analysis System
 
-Sistema de consulta inteligente sobre documentos de riesgos basado en **Retrieval‑Augmented Generation (RAG)** con una arquitectura **baseline‑first**, **grounded** y **reproducible**.
+Sistema de consulta inteligente sobre documentos de análisis de riesgos basado en **Retrieval‑Augmented Generation (RAG)** con una arquitectura **baseline-first**, **grounded** y **reproducible**.
 
 El proyecto está diseñado con foco en **ingeniería de sistemas de IA en producción**, priorizando control, trazabilidad y degradación segura por encima de la dependencia de modelos generativos.
 
 ---
 
-## Tabla de Contenidos
+# Principios de Diseño
 
-* Principios de Diseño
-* Arquitectura
-* Flujo de Consulta
-* Modos de Operación
-* Transparencia y Grounding
-* Quick Start
-* Instalación
-* Configuración
-* API Reference
-* Testing
-* Estructura del Proyecto
-* Roadmap
-* Limitaciones Conocidas
-* Contribución
-* Licencia
+El sistema sigue una filosofía conservadora para evitar alucinaciones.
 
----
+## 1. Independencia de LLMs
 
-## Principios de Diseño
+El sistema no depende de modelos generativos para funcionar.
 
-El sistema se rige por los siguientes principios fundamentales:
+## 2. LLMs como redactores
 
-* **Independencia de LLMs**: el sistema nunca depende exclusivamente de un modelo generativo.
-* **LLMs como redactores**: los LLMs no deciden evidencia; solo redactan a partir del contexto recuperado.
-* **Conservadurismo ante incertidumbre**: ante ambigüedad o falta de evidencia explícita, el sistema prefiere no responder.
-* **Degradación segura y determinística**: ante fallos, el sistema degrada sin downtime y sin cambiar el contrato de salida.
+Los modelos generativos no deciden la evidencia; únicamente redactan a partir del contexto recuperado.
 
----
+## 3. Conservadurismo ante incertidumbre
 
-## Arquitectura
+Si no existe evidencia clara en los documentos, el sistema **prefiere abstenerse de responder**.
+
+## 4. Degradación segura
+
+El sistema puede degradar de forma determinística:
 
 ```
-┌─────────┐     ┌─────────┐     ┌──────────┐     ┌────────────┐
-│  PDFs   │ ──▶ │ Ingesta │ ──▶ │ Retrieval│ ──▶ │  Generator │
-└─────────┘     └─────────┘     └──────────┘     └────────────┘
-                                       │               │
-                                       ▼               ▼
-                                 ┌──────────┐   ┌────────────┐
-                                 │   BM25   │   │ LLM Local / │
-                                 │ Baseline │   │   Remoto    │
-                                 └──────────┘   └────────────┘
+LLM remoto → LLM local → Baseline determinístico
 ```
 
-El **retrieval** es siempre explícito y controlado. El **generator** nunca introduce información externa al contexto.
+sin cambiar el contrato de la API.
 
 ---
 
-## Flujo de Consulta
+# Arquitectura
+
+Pipeline simplificado:
+
+```
+User Query
+   │
+   ▼
+Query Wrapper
+   │
+   ▼
+Hybrid Retrieval
+(BM25 + Dense Embeddings)
+   │
+   ▼
+Top-K Chunks
+   │
+   ▼
+Baseline Extractor / LLM Generator
+   │
+   ▼
+Answer or Abstention
+```
+
+Componentes principales:
+
+* **BM25** para recuperación lexical robusta
+* **Dense embeddings** para similitud semántica
+* **Hybrid retriever** que combina ambos
+* **Baseline extractivo determinístico**
+* **LLM opcional para redacción**
+
+---
+
+# Flujo de Consulta
 
 1. El usuario envía una pregunta en lenguaje natural.
-2. El *Query Wrapper* selecciona el modo de operación.
-3. BM25 recupera los fragmentos más relevantes del índice.
-4. El generador:
 
-   * extrae directamente texto (baseline), o
-   * redacta usando exclusivamente el contexto recuperado (LLM).
+2. El **Query Wrapper** selecciona el modo de operación.
+
+3. El **Hybrid Retriever** recupera los fragmentos relevantes.
+
+4. El sistema decide:
+
+   * responder usando evidencia explícita
+   * o abstenerse si no existe evidencia suficiente.
+
 5. La API devuelve:
 
-   * respuesta,
-   * fuentes textuales,
-   * metadata completa de la ejecución.
+* respuesta
+* fragmentos recuperados
+* metadata de ejecución
 
 ---
 
-## Modos de Operación
+# Modos de Operación
 
-### Baseline (Default)
+## Baseline (Default)
 
-* **Retrieval**: BM25
-* **Generación**: extracción textual directa
-* **Ventajas**:
+Modo **determinístico y sin LLMs**.
 
-  * cero consumo de tokens,
-  * completamente determinístico,
-  * latencia menor a 100 ms,
-  * sin dependencias externas.
+Retrieval
 
-Uso recomendado para producción estable.
+```
+Hybrid Retriever
+BM25 + Dense Embeddings
+```
+
+Generación
+
+```
+Extracción textual directa
+```
+
+Ventajas:
+
+* cero consumo de tokens
+* determinístico
+* latencia muy baja
+* ideal para producción estable
 
 ```
 RAG_MODE=baseline
@@ -93,17 +121,31 @@ RAG_MODE=baseline
 
 ---
 
-### Local
+## Local Mode
 
-* **Retrieval**: BM25
-* **Generación**: LLM local vía Ollama (por ejemplo `qwen2.5:3b`)
-* **Ventajas**:
+Retrieval:
 
-  * sin conocimiento externo,
-  * gates anti‑alucinación explícitos,
-  * control total del entorno.
+```
+Hybrid Retriever
+```
 
-Requiere Ollama en ejecución.
+Generación:
+
+```
+LLM local vía Ollama
+```
+
+Ejemplo de modelo:
+
+```
+qwen2.5:3b
+```
+
+Ventajas:
+
+* sin conocimiento externo
+* grounded en documentos
+* control total del entorno
 
 ```
 RAG_MODE=local
@@ -111,233 +153,254 @@ RAG_MODE=local
 
 ---
 
-### LLM Remoto (Opcional)
+## Remote LLM Mode (Opcional)
 
-* **Retrieval**: embeddings + Chroma
-* **Generación**: LLM externo (Gemini)
-* **Ventajas**:
+Retrieval:
 
-  * mayor capacidad generativa,
-  * fallback automático a baseline.
+```
+Hybrid Retriever
+```
+
+Generación:
+
+```
+LLM remoto (ej: Gemini)
+```
+
+El sistema incluye **fallback automático al baseline**.
 
 ```
 RAG_MODE=llm
-GOOGLE_API_KEY=tu_api_key
+GOOGLE_API_KEY=your_api_key
 ```
 
 ---
 
-## Transparencia y Grounding
+# Transparencia y Grounding
 
-El sistema implementa múltiples mecanismos de validación:
+El sistema implementa múltiples mecanismos para evitar alucinaciones.
 
-### Gates Anti‑Alucinación
+## Gates Anti-Alucinación
 
-* score mínimo de retrieval (BM25),
-* detección explícita de definiciones en texto,
-* validación post‑LLM mediante solapamiento léxico,
-* bloqueo de respuestas meta o de tipo disclaimer.
+El sistema valida:
 
-### Metadata Completa
-
-Cada respuesta incluye información estructurada sobre:
-
-* modo utilizado,
-* latencia de ejecución,
-* fragmentos recuperados,
-* scores de relevancia,
-* fuentes citadas explícitamente.
+* score mínimo de retrieval
+* presencia explícita de evidencia textual
+* solapamiento léxico entre respuesta y contexto
+* bloqueo de respuestas meta o disclaimers
 
 ---
 
-## Quick Start
+# Metadata de Respuesta
 
-### Docker (Recomendado)
+Cada respuesta incluye:
+
+```
+{
+  "respuesta": "...",
+  "retrieved": [...],
+  "no_evidence": false,
+  "baseline_version": "robust_v5_2026-03-09"
+}
+```
+
+Esto permite auditoría completa del sistema.
+
+---
+
+# Evaluación
+
+Dataset:
+
+```
+eval/v1.jsonl
+```
+
+Contiene:
+
+```
+50 preguntas
+35 answerable
+15 unanswerable
+```
+
+Resultados actuales:
+
+| Metric                 | Value |
+| ---------------------- | ----- |
+| Precision@5            | 0.029 |
+| Recall@5               | 0.147 |
+| Abstention Accuracy    | 0.93  |
+| False No Evidence Rate | 0.028 |
+| Average Latency        | 97 ms |
+
+El sistema prioriza **abstención segura** sobre respuestas incorrectas.
+
+---
+
+# Quick Start
+
+Clonar repositorio
 
 ```
 git clone <repo-url>
-cd RAG_riegos
-docker compose up --build
+cd rag-riesgos
 ```
-
-Servicios disponibles:
-
-* Backend: [http://localhost:8000](http://localhost:8000)
-* Frontend: [http://localhost:3000](http://localhost:3000)
-* Documentación API: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ---
 
-## Instalación
+# Instalación
 
-### Prerrequisitos
-
-* Python 3.11+
-* Node.js 18+
-* Docker + Docker Compose (opcional pero recomendado)
-
-### Backend
+Crear entorno
 
 ```
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate
+```
+
+Instalar dependencias
+
+```
 pip install -r requirements.txt
-cp .env.example .env
-```
-
-### Frontend
-
-```
-cd frontend
-npm install
-npm start
 ```
 
 ---
 
-## Configuración
-
-Variables de entorno principales:
+# Ejecutar Backend
 
 ```
-RAG_MODE=baseline              # baseline | local | llm
-GOOGLE_API_KEY=opcional
-CHUNK_SIZE=500
-CHUNK_OVERLAP=50
-TOP_K=5
-BACKEND_PORT=8000
-FRONTEND_PORT=3000
+uvicorn backend.main:app --port 8000
+```
+
+Servidor disponible en:
+
+```
+http://localhost:8000
+```
+
+Documentación API:
+
+```
+http://localhost:8000/docs
 ```
 
 ---
 
-## API Reference
+# Ejemplo de Consulta
 
-### POST /preguntar
+Request
+
+```
+POST /preguntar
+```
 
 ```
 {
-  "texto": "¿Cuáles son los tres niveles de riesgo?"
-}
-```
-
-Respuesta:
-
-```
-{
-  "respuesta": "Los tres niveles de riesgo son...",
-  "fuentes": ["fragmento 1", "fragmento 2"],
+  "texto": "¿Cuál es la prima mínima por embarque?",
   "mode": "baseline"
 }
 ```
 
----
-
-### GET /health
+Response
 
 ```
 {
-  "status": "healthy",
-  "mode": "baseline"
+  "respuesta": "...",
+  "retrieved": [...],
+  "no_evidence": false,
+  "baseline_version": "robust_v5_2026-03-09"
 }
 ```
 
 ---
 
-## Testing
+# Evaluación Automática
 
-Ejecución de tests:
-
-```
-pytest
-pytest -v
-pytest --cov=backend
-```
-
-La suite cubre:
-
-* contrato de la API,
-* comportamiento determinístico del baseline,
-* fallback automático,
-* estabilidad y latencia,
-* validación de gates anti‑alucinación.
-
----
-
-## Estructura del Proyecto
+Ejecutar benchmark:
 
 ```
-RAG_riegos/
-├── backend/
-│   ├── main.py
-│   ├── query_wrapper.py
-│   ├── baseline_rag.py
-│   ├── baseline_store.py
-│   ├── local_rag.py
-│   ├── ollama_client.py
-│   ├── pdf_loader.py
-│   └── config.py
-├── frontend/
-├── data/
-├── tests/
-├── docker-compose.yml
-├── requirements.txt
-└── README.md
+python eval/evaluate.py \
+  --base_url http://127.0.0.1:8000 \
+  --dataset eval/v1.jsonl \
+  --modes baseline
+```
+
+Resultados se guardan en:
+
+```
+eval/runs/
 ```
 
 ---
 
-## Roadmap
+# Estructura del Proyecto
 
-### Completado
+```
+backend/
+│
+├── main.py
+├── query_wrapper.py
+├── baseline_rag.py
+│
+├── retrievers/
+│   ├── bm25_retriever.py
+│   ├── dense_retriever.py
+│   └── hybrid_retriever.py
+│
+├── services/
+│
+├── pdf_loader.py
+├── config.py
+│
+eval/
+scripts/
+data/
 
-* RAG baseline con BM25
-* Modo local grounded (BM25 + Ollama)
+README.md
+```
+
+---
+
+# Roadmap
+
+## Completado
+
+* RAG baseline determinístico
+* Hybrid retrieval
 * API FastAPI
-* Frontend React
-* Suite de tests reproducible
-* Containerización
+* evaluación automática
+* gates anti-alucinación
 
-### En progreso
+## En progreso
 
-* Tests de integración end‑to‑end
-* Comparativa cuantitativa entre modos
+* evaluación comparativa entre modos
+* integración MLflow
 
-### Planificado
+## Planificado
 
-* Evaluación automática (RAGAS)
-* Observabilidad (métricas y logs)
-* Cache de respuestas
-* Autenticación
-
----
-
-## Limitaciones Conocidas
-
-Las siguientes limitaciones son **decisiones de diseño conscientes**:
-
-* Solo se responden definiciones explícitas en el texto.
-* El modo local requiere Ollama activo.
-* Heurísticas conservadoras pueden descartar respuestas válidas en textos muy parafraseados.
-* No hay razonamiento multi‑documento avanzado.
-* La evaluación automática no está integrada por defecto.
+* RAGAS evaluation
+* reranking con cross-encoder
+* observabilidad
+* caching
 
 ---
 
-## Contribución
+# Limitaciones Conocidas
 
-Las contribuciones son bienvenidas siguiendo el flujo estándar:
-
-```
-git checkout -b feature/nueva-funcionalidad
-git commit -m "feat: descripción"
-git push origin feature/nueva-funcionalidad
-```
-
-Se utilizan **Conventional Commits**.
+* retrieval aún puede mejorar en recall
+* heurísticas conservadoras pueden descartar respuestas válidas
+* no hay razonamiento multi-documento avanzado
 
 ---
 
-## Licencia
+# Autor
+
+**Andrés García**
+Computer Science
+Universidad Nacional de Colombia
+
+---
+
+# Licencia
 
 MIT

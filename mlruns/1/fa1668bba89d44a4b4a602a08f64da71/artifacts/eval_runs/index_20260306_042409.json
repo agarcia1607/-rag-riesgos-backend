@@ -1,0 +1,52 @@
+[
+  {
+    "mode": "baseline",
+    "summary": {
+      "n": 50,
+      "k": 5,
+      "retrieval_eligible_n": 34,
+      "avg_precision_at_k": 0.0,
+      "avg_recall_at_k": 0.0,
+      "answerable_total": 35,
+      "false_no_evidence_rate": 0.0,
+      "unanswerable_total": 15,
+      "abstention_accuracy": 0.8,
+      "abstention_wrong_rate": 0.2,
+      "must_include_token_hit_rate": 0.8571428571428571,
+      "must_include_all_hit_rate": 0.6764705882352942,
+      "answered_but_no_retrieved_rate": 0.0,
+      "bad_answer_rate": 0.0,
+      "http_fail_rate": 0.0,
+      "latency_ms_avg": 4,
+      "latency_ms_p50": 4,
+      "latency_ms_p95": 6,
+      "latency_ms_p99": 7
+    },
+    "file": "eval/runs/run_20260306_035630_baseline.json"
+  },
+  {
+    "mode": "local",
+    "summary": {
+      "n": 50,
+      "k": 5,
+      "retrieval_eligible_n": 34,
+      "avg_precision_at_k": 0.0,
+      "avg_recall_at_k": 0.0,
+      "answerable_total": 35,
+      "false_no_evidence_rate": 0.0,
+      "unanswerable_total": 15,
+      "abstention_accuracy": 0.8,
+      "abstention_wrong_rate": 0.2,
+      "must_include_token_hit_rate": 0.8571428571428571,
+      "must_include_all_hit_rate": 0.7058823529411765,
+      "answered_but_no_retrieved_rate": 0.0,
+      "bad_answer_rate": 0.0,
+      "http_fail_rate": 0.0,
+      "latency_ms_avg": 33147,
+      "latency_ms_p50": 40535,
+      "latency_ms_p95": 55296,
+      "latency_ms_p99": 80492
+    },
+    "file": "eval/runs/run_20260306_042409_local.json"
+  }
+]

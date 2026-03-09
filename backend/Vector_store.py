@@ -3,7 +3,7 @@ import os
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from dotenv import load_dotenv
-from backend.Pdf_loader import cargar_pdf
+from backend.pdf_loader import cargar_pdf
 
 
 # Cargar variables de entorno
