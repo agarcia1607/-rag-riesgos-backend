@@ -5,15 +5,31 @@ import logging
 import os
 import re
 import json
+import unicodedata
 
 from backend.ollama_client import OllamaClient
 from backend.retrievers.factory import build_retriever
+
 logger = logging.getLogger(__name__)
 
 NO_EVIDENCE = "No se encontró evidencia suficiente en los documentos."
 
 
 # --------------------------- helpers (module-level) ---------------------------
+
+def _strip_accents(text: str) -> str:
+    text = text or ""
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", text)
+        if unicodedata.category(ch) != "Mn"
+    )
+
+
+def _normalize_text(text: str) -> str:
+    t = _strip_accents(text or "").lower()
+    t = re.sub(r"\s+", " ", t)
+    return t.strip()
+
 
 def _has_any(text: str, terms: List[str]) -> bool:
     t = (text or "").lower()
@@ -83,16 +99,34 @@ def _extract_deducible_refrigeracion_strict(question: str, context_plain: str) -
     return "Según el documento, el deducible por fallas en el sistema de refrigeración es:\n" + span
 
 
+def _extract_json_candidate(raw: str) -> str:
+    """
+    Intenta extraer el primer bloque JSON válido de una respuesta del LLM.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+
+    if raw.startswith("{") and raw.endswith("}"):
+        return raw
+
+    m = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+    if m:
+        return m.group(0).strip()
+
+    return raw
+
+
 # ------------------------------ LocalRAG class ------------------------------
 
 class LocalRAG:
     """
     Local:
-    - Retrieval: BM25 (vía retriever modular)
-    - Redacción: Ollama (síntesis controlada)
-    - Gates para NO_EVIDENCE
-    - Extractores deterministas
-    - Evidencia auditable
+    - Retrieval: Hybrid/BM25 vía retriever modular
+    - Redacción: Ollama
+    - Extractores deterministas primero
+    - Fallback extractivo controlado
+    - Modo debug para inspeccionar salida cruda del LLM
     """
 
     def __init__(self, pdf_path: str, k: int = 5):
@@ -100,16 +134,23 @@ class LocalRAG:
 
         self.k = int(os.getenv("BM25_K", str(k)))
         self.max_context_chars = int(os.getenv("MAX_CONTEXT_CHARS", "9000"))
-        self.top_n_for_llm = int(os.getenv("TOP_N_FOR_LLM", "3"))
+        self.top_n_for_llm = int(os.getenv("TOP_N_FOR_LLM", "5"))
+
+        # debug / visibilidad
+        self.debug_no_fallback = os.getenv("DEBUG_NO_FALLBACK", "0") == "1"
+        self.include_raw_llm_answer = os.getenv("LOCAL_RAG_INCLUDE_RAW", "0") == "1"
+        self.log_llm_prompt = os.getenv("LOCAL_RAG_LOG_PROMPT", "0") == "1"
 
         self.retriever = build_retriever()
         self.ollama = OllamaClient()
 
         logger.info(
-            "🟣 LocalRAG listo | BM25_K=%s | TOP_N_FOR_LLM=%s | MAX_CONTEXT_CHARS=%s | model=%s | base=%s",
+            "🟣 LocalRAG listo | BM25_K=%s | TOP_N_FOR_LLM=%s | MAX_CONTEXT_CHARS=%s | DEBUG_NO_FALLBACK=%s | INCLUDE_RAW=%s | model=%s | base=%s",
             self.k,
             self.top_n_for_llm,
             self.max_context_chars,
+            self.debug_no_fallback,
+            self.include_raw_llm_answer,
             getattr(self.ollama, "model", "unknown"),
             getattr(self.ollama, "base_url", "unknown"),
         )
@@ -148,12 +189,15 @@ class LocalRAG:
 
             cid = r.get("chunk_id")
             score = r.get("score", 0.0)
+            page = (r.get("metadata") or {}).get("page")
             try:
                 score_str = f"{float(score):.4f}"
             except Exception:
                 score_str = str(score)
 
-            blocks.append(f"[chunk_id: {cid} | score: {score_str}]\n{text}")
+            blocks.append(
+                f"[chunk_id: {cid} | page: {page} | score: {score_str}]\n{text}"
+            )
 
         return self._truncate_context("\n\n".join(blocks))
 
@@ -174,7 +218,97 @@ class LocalRAG:
                 ids.append(cid)
         return ids
 
-    # ------------------ VRDLM extractor (FIX DEFINITIVO) ------------------
+    # ------------------ lightweight reranking for local mode ------------------
+
+    def _extract_question_keywords(self, question: str) -> List[str]:
+        q = _normalize_text(question)
+
+        # quitar palabras vacías comunes
+        stop = {
+            "que", "qué", "es", "la", "el", "los", "las", "de", "del", "segun", "según",
+            "póliza", "poliza", "cual", "cuál", "defina", "definicion", "definición",
+            "segun", "según", "segun", "según", "por", "para", "en", "y", "o",
+        }
+
+        raw_tokens = re.findall(r"[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\-]+", q)
+        tokens = [t for t in raw_tokens if len(t) >= 3 and t not in stop]
+
+        # frases útiles
+        phrases: List[str] = []
+        if "escolta satelital" in q:
+            phrases.append("escolta satelital")
+        if "monitoreo satelital" in q:
+            phrases.append("monitoreo satelital")
+        if "fast track" in q:
+            phrases.append("fast track")
+
+        # de-dup manteniendo orden
+        out: List[str] = []
+        seen = set()
+        for x in phrases + tokens:
+            if x not in seen:
+                out.append(x)
+                seen.add(x)
+        return out
+
+    def _is_definition_question(self, question: str) -> bool:
+        q = _normalize_text(question)
+        return any(
+            pat in q
+            for pat in [
+                "que es ",
+                "defina ",
+                "definicion de",
+                "definición de",
+                "cual es la definicion",
+                "cuál es la definición",
+            ]
+        )
+
+    def _rerank_for_question(self, question: str, retrieved: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not retrieved:
+            return retrieved
+
+        keywords = self._extract_question_keywords(question)
+        is_def = self._is_definition_question(question)
+
+        scored: List[tuple[float, Dict[str, Any]]] = []
+        for idx, r in enumerate(retrieved):
+            text = _normalize_text(r.get("text") or "")
+            score = float(r.get("score") or 0.0)
+
+            bonus = 0.0
+
+            # bonus por frases completas
+            for kw in keywords:
+                if " " in kw and kw in text:
+                    bonus += 2.5
+
+            # bonus por coincidencias de tokens
+            token_hits = sum(1 for kw in keywords if kw in text)
+            bonus += 0.35 * token_hits
+
+            # bonus definicional: ":" o "se define" o "es"
+            if is_def:
+                if ":" in (r.get("text") or ""):
+                    bonus += 0.5
+                if "se define" in text:
+                    bonus += 0.7
+                if " es " in f" {text} ":
+                    bonus += 0.2
+
+            # pequeño castigo por chunks demasiado genéricos
+            if "incoterm" in text and "escolta satelital" not in text:
+                bonus -= 0.75
+
+            # estabilidad por orden original
+            final = score + bonus - 0.0001 * idx
+            scored.append((final, r))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [r for _, r in scored]
+
+    # ------------------ VRDLM extractor ------------------
 
     def _extract_vrdlm_from_retrieved(self, question: str, retrieved: List[Dict[str, Any]]) -> str:
         q = (question or "").lower()
@@ -324,7 +458,7 @@ class LocalRAG:
 
         return a.rstrip() + "\n\nTérminos clave: " + ", ".join(missing) + "."
 
-    # ------------------ Answer Template v2 (must_include boost) ------------------
+    # ------------------ Answer Template v2 ------------------
 
     def _normalize_answer_format(self, text: str) -> str:
         t = (text or "").strip()
@@ -431,23 +565,34 @@ class LocalRAG:
     # ------------------ core prompt + ask ------------------
 
     def _prompt(self, question: str, context_structured: str) -> str:
-        return f"""Eres un asistente de análisis documental.
-Responde SOLO usando el CONTEXTO. Si no hay evidencia suficiente, responde exactamente:
-"{NO_EVIDENCE}"
+        return f"""
+Eres un asistente de análisis documental de pólizas.
 
-REGLAS:
-- No inventes.
-- Si respondes, incluye la información específica pedida.
-- Devuelve un JSON válido con el siguiente formato:
+Tu tarea es responder SOLO con base en el CONTEXTO.
+Si el contexto no contiene una respuesta suficientemente explícita, responde exactamente:
 
 {{
-  "answer": "...",
-  "evidence_chunk_ids": [<chunk_id>, ...]
+  "answer": "{NO_EVIDENCE}",
+  "evidence_chunk_ids": []
 }}
 
-IMPORTANTE:
-- evidence_chunk_ids debe contener SOLO chunk_id que aparecen en el CONTEXTO.
-- Si no hay evidencia, answer debe ser exactamente "{NO_EVIDENCE}" y evidence_chunk_ids = [].
+REGLAS OBLIGATORIAS:
+- Responde en español.
+- No inventes información.
+- No uses conocimiento externo.
+- No digas "según el documento, lo más relevante es".
+- No listes fragmentos.
+- No copies todo el contexto.
+- Si hay definición explícita, redacta una respuesta clara en 1 o 2 frases.
+- Devuelve SOLO JSON válido.
+- evidence_chunk_ids debe contener SOLO chunk_id visibles en el CONTEXTO.
+- Si no estás seguro, responde NO_EVIDENCE.
+
+FORMATO DE SALIDA:
+{{
+  "answer": "...",
+  "evidence_chunk_ids": [123, 456]
+}}
 
 PREGUNTA:
 {question}
@@ -455,6 +600,11 @@ PREGUNTA:
 CONTEXTO:
 {context_structured}
 """.strip()
+
+    def _maybe_attach_raw(self, out: Dict[str, Any], raw_llm_answer: str) -> Dict[str, Any]:
+        if self.include_raw_llm_answer:
+            out["raw_llm_answer"] = raw_llm_answer
+        return out
 
     def ask(self, question: str) -> Dict[str, Any]:
         question = (question or "").strip()
@@ -471,6 +621,7 @@ CONTEXTO:
             }
 
         retrieved = self.retriever.retrieve(question, k=self.k)
+        retrieved = self._rerank_for_question(question, retrieved)
 
         fuentes_for_ui: List[Any] = []
         for r in retrieved:
@@ -498,6 +649,7 @@ CONTEXTO:
 
         context_plain = self._build_plain_context(retrieved)
 
+        # Extractores deterministas primero
         vrdlm = self._extract_vrdlm_from_retrieved(question, retrieved)
         if vrdlm:
             ans = self._apply_answer_template_v2(question, vrdlm, retrieved)
@@ -544,17 +696,23 @@ CONTEXTO:
         context_structured = self._build_structured_context(top)
         prompt = self._prompt(question, context_structured)
 
+        if self.log_llm_prompt:
+            logger.info("PROMPT OLLAMA:\n%s", prompt)
+
         try:
             raw = (self.ollama.generate(prompt) or "").strip()
+            logger.info("RAW OLLAMA ANSWER: %s", raw)
 
             answer = ""
             evidence_ids: List[int] = []
             gate_reason: Optional[str] = None
 
             try:
-                obj = json.loads(raw)
+                candidate = _extract_json_candidate(raw)
+                obj = json.loads(candidate)
                 answer = (obj.get("answer") or "").strip()
                 ids = obj.get("evidence_chunk_ids") or []
+
                 normalized: List[int] = []
                 for x in ids:
                     try:
@@ -562,6 +720,7 @@ CONTEXTO:
                     except Exception:
                         pass
                 evidence_ids = normalized
+
             except Exception:
                 answer = raw
                 evidence_ids = []
@@ -570,18 +729,37 @@ CONTEXTO:
             if not answer:
                 raise RuntimeError("llm_empty_answer")
 
+            # Debug: deja ver lo que produjo Ollama sin taparlo con fallback
+            if self.debug_no_fallback:
+                answer = self._apply_answer_template_v2(question, answer, retrieved)
+                if not evidence_ids:
+                    evidence_ids = self._top_chunk_ids(retrieved, self.top_n_for_llm)
+
+                out = {
+                    "mode": "local",
+                    "respuesta": answer,
+                    "fuentes": fuentes_for_ui,
+                    "retrieved": retrieved,
+                    "evidence_chunk_ids": evidence_ids,
+                    "no_evidence": (answer.strip() == NO_EVIDENCE),
+                    "used_fallback": False,
+                    "gate_reason": gate_reason or "debug_raw_llm",
+                }
+                return self._maybe_attach_raw(out, raw)
+
             if answer.strip() == NO_EVIDENCE:
                 bullets = []
                 for r in retrieved[: min(5, len(retrieved))]:
                     t = (r.get("text") or "").strip()
                     if t and not self._is_page_marker(t):
                         bullets.append(f"- {t}")
+
                 fallback_answer = "Según el documento, lo más relevante es:\n" + "\n".join(bullets)
                 fallback_answer = self._apply_answer_template_v2(question, fallback_answer, retrieved)
 
                 ids = self._top_chunk_ids(retrieved, self.top_n_for_llm)
 
-                return {
+                out = {
                     "mode": "local",
                     "respuesta": fallback_answer,
                     "fuentes": fuentes_for_ui,
@@ -591,13 +769,14 @@ CONTEXTO:
                     "used_fallback": True,
                     "gate_reason": "llm_no_evidence_fallback_extractive",
                 }
+                return self._maybe_attach_raw(out, raw)
 
             answer = self._apply_answer_template_v2(question, answer, retrieved)
 
             if not evidence_ids:
                 evidence_ids = self._top_chunk_ids(retrieved, self.top_n_for_llm)
 
-            return {
+            out = {
                 "mode": "local",
                 "respuesta": answer,
                 "fuentes": fuentes_for_ui,
@@ -607,14 +786,17 @@ CONTEXTO:
                 "used_fallback": False,
                 "gate_reason": gate_reason,
             }
+            return self._maybe_attach_raw(out, raw)
 
         except Exception as e:
-            logger.error(f"❌ Ollama error: {e}. Fallback a extractivo.")
+            logger.error("❌ Ollama error: %s. Fallback a extractivo.", e)
+
             bullets = []
             for r in retrieved[: min(5, len(retrieved))]:
                 t = (r.get("text") or "").strip()
                 if t and not self._is_page_marker(t):
                     bullets.append(f"- {t}")
+
             fallback_answer = "Según el documento, lo más relevante es:\n" + "\n".join(bullets)
             fallback_answer = self._apply_answer_template_v2(question, fallback_answer, retrieved)
 
