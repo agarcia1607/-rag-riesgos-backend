@@ -1,0 +1,30 @@
+[
+  {
+    "mode": "baseline",
+    "summary": {
+      "n": 50,
+      "k": 5,
+      "retrieval_eligible_n": 34,
+      "avg_precision_at_k": 0.029411764705882353,
+      "avg_recall_at_k": 0.14705882352941177,
+      "answerable_total": 35,
+      "false_no_evidence_rate": 0.02857142857142857,
+      "unanswerable_total": 15,
+      "abstention_accuracy": 0.9333333333333333,
+      "abstention_wrong_rate": 0.06666666666666667,
+      "must_include_token_hit_rate": 0.7619047619047619,
+      "must_include_all_hit_rate": 0.6176470588235294,
+      "answered_but_no_retrieved_rate": 0.0,
+      "bad_answer_rate": 0.0,
+      "http_fail_rate": 0.0,
+      "latency_ms_avg": 30,
+      "latency_ms_p50": 29,
+      "latency_ms_p95": 40,
+      "latency_ms_p99": 45,
+      "retriever_types_seen": [
+        "hybrid"
+      ]
+    },
+    "file": "eval/runs/run_20260310_001000_baseline.json"
+  }
+]
