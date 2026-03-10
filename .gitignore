@@ -34,3 +34,25 @@ eval/runs/
 
 mlruns/
 mlflow.db
+
+
+
+mlruns/
+mlflow.db
+
+
+
+# Python
+__pycache__/
+*.pyc
+
+# MLflow
+mlruns/
+mlflow.db
+
+# Entornos
+.venv/
+env/
+
+# OS
+.DS_Store
