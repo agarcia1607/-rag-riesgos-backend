@@ -8,7 +8,17 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 def _clean(text: str) -> str:
     text = fix_text(text)
     text = text.replace("\xa0", " ")
-    text = re.sub(r"\s+", " ", text)
+
+    # preservar saltos de línea primero
+    text = text.replace("\r", "\n")
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    # limpiar espacios dentro de línea sin destruir estructura
+    text = re.sub(r"[ \t]+", " ", text)
+
+    # quitar espacios alrededor de saltos
+    text = re.sub(r" *\n *", "\n", text)
+
     return text.strip()
 
 
@@ -21,11 +31,9 @@ def _looks_like_toc(text: str) -> bool:
     if not t:
         return True
 
-    # muchas líneas de puntos / estructura de índice
     if "................................................................" in t:
         return True
 
-    # encabezados típicos de índice
     toc_terms = [
         "datos generales",
         "territorialidad",
@@ -49,15 +57,12 @@ def _is_noise(text: str) -> bool:
     if not t:
         return True
 
-    # chunks demasiado cortos
-    if len(t) < 40:
+    if len(t) < 60:
         return True
 
-    # marcador de página aislado
     if re.fullmatch(r"\[page\s+\d+\]", t, re.IGNORECASE):
         return True
 
-    # solo números o símbolos
     if re.fullmatch(r"[\d\s\W]+", t):
         return True
 
@@ -71,14 +76,15 @@ def cargar_pdf(ruta_pdf: str) -> list[Document]:
     doc = fitz.open(ruta_pdf)
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=400,
-        chunk_overlap=80,
+        chunk_size=900,
+        chunk_overlap=180,
         separators=[
             "\n\n",
             "\n",
             ". ",
             "; ",
             ": ",
+            ", ",
             " "
         ],
     )
@@ -87,7 +93,7 @@ def cargar_pdf(ruta_pdf: str) -> list[Document]:
     chunk_id = 0
 
     for page_num, pagina in enumerate(doc):
-        raw = pagina.get_text()
+        raw = pagina.get_text("text")
         cleaned = _clean(raw)
 
         if not cleaned:

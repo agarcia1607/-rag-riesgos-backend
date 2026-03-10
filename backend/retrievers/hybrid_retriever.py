@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from backend.retrievers.base_retriever import BaseRetriever
+from backend.retrievers.reranker import Reranker
 
 
 class HybridRetriever(BaseRetriever):
@@ -11,6 +12,7 @@ class HybridRetriever(BaseRetriever):
     - combina BM25 y Dense
     - fusiona por chunk_id
     - normaliza scores por ranking simple
+    - rerankea candidatos con cross-encoder
     - devuelve formato estándar
     """
 
@@ -19,10 +21,17 @@ class HybridRetriever(BaseRetriever):
         bm25_retriever: Any,
         dense_retriever: Any,
         alpha: float = 0.5,
+        initial_k: int = 15,
+        rerank_top_k: int = 5,
+        use_reranker: bool = True,
     ):
         self.bm25_retriever = bm25_retriever
         self.dense_retriever = dense_retriever
         self.alpha = alpha
+        self.initial_k = initial_k
+        self.rerank_top_k = rerank_top_k
+        self.use_reranker = use_reranker
+        self.reranker = Reranker() if use_reranker else None
 
     def _rank_fusion_scores(self, items: List[Dict[str, Any]]) -> Dict[Any, float]:
         """
@@ -38,8 +47,10 @@ class HybridRetriever(BaseRetriever):
         return scores
 
     def retrieve(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
-        bm25_results = self.bm25_retriever.retrieve(query, k=max(k * 2, 10))
-        dense_results = self.dense_retriever.retrieve(query, k=max(k * 2, 10))
+        candidate_k = max(self.initial_k, k)
+
+        bm25_results = self.bm25_retriever.retrieve(query, k=max(candidate_k * 2, 10))
+        dense_results = self.dense_retriever.retrieve(query, k=max(candidate_k * 2, 10))
 
         bm25_rank_scores = self._rank_fusion_scores(bm25_results)
         dense_rank_scores = self._rank_fusion_scores(dense_results)
@@ -84,4 +95,19 @@ class HybridRetriever(BaseRetriever):
             combined.append(row)
 
         combined.sort(key=lambda x: x["score"], reverse=True)
-        return combined[:k]
+
+        candidates = combined[:candidate_k]
+
+        if self.use_reranker and self.reranker is not None:
+            try:
+                final_k = min(k, self.rerank_top_k)
+                reranked = self.reranker.rerank(query, candidates, top_k=final_k)
+
+                for item in reranked:
+                    item["retriever"] = "hybrid_rerank"
+
+                return reranked
+            except Exception as e:
+                print(f"[WARN] Reranker failed, using hybrid ranking only: {e}")
+
+        return candidates[:k]
