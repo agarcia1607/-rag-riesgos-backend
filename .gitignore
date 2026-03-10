@@ -32,3 +32,5 @@ frontend/build/
 # eval outputs
 eval/runs/
 
+mlruns/
+mlflow.db
