@@ -24,3 +24,4 @@ langchain-text-splitters==0.3.8
 
 # Utils
 tqdm
+langchain==0.3.26
