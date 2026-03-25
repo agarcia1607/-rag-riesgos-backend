@@ -1,8 +1,10 @@
-node_modules
-build
-dist
+.venv
 .git
-Dockerfile
-npm-debug.log
-yarn.lock
-pnpm-lock.yaml
+__pycache__
+*.pyc
+mlruns
+mlflow.db
+eval/runs
+frontend
+*.md
+.env

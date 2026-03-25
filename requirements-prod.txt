@@ -1,0 +1,26 @@
+# API
+fastapi==0.116.1
+uvicorn==0.35.0
+pydantic==2.11.7
+python-dotenv==1.1.1
+python-multipart==0.0.20
+
+# LLM
+anthropic>=0.40.0
+
+# Retrieval
+rank-bm25==0.2.2
+sentence-transformers==3.4.1
+numpy==2.3.1
+scikit-learn>=1.3.0
+
+# PDF
+PyMuPDF==1.26.3
+ftfy
+
+# LangChain (chunking solamente)
+langchain-core==0.3.68
+langchain-text-splitters==0.3.8
+
+# Utils
+tqdm
