@@ -1,8 +1,8 @@
 # RAG Risk Analysis System
 
-Sistema de consulta inteligente sobre documentos de análisis de riesgos basado en **Retrieval‑Augmented Generation (RAG)** con una arquitectura **baseline-first**, **grounded** y **reproducible**.
+Sistema de consulta inteligente sobre documentos de análisis de riesgos basado en **Retrieval-Augmented Generation (RAG)** con una arquitectura **baseline-first**, **grounded** y **reproducible**.
 
-El proyecto está diseñado con foco en **ingeniería de sistemas de IA en producción**, priorizando control, trazabilidad y degradación segura por encima de la dependencia de modelos generativos.
+El proyecto está diseñado con foco en **ingeniería de sistemas de IA en producción**, priorizando control, trazabilidad y degradación segura por encima de la dependencia total de modelos generativos.
 
 ---
 
@@ -12,11 +12,11 @@ El sistema sigue una filosofía conservadora para evitar alucinaciones.
 
 ## 1. Independencia de LLMs
 
-El sistema no depende de modelos generativos para funcionar.
+El sistema **no depende de modelos generativos para funcionar**. Existe un modo determinístico completamente extractivo.
 
 ## 2. LLMs como redactores
 
-Los modelos generativos no deciden la evidencia; únicamente redactan a partir del contexto recuperado.
+Cuando se utilizan LLMs, estos **no deciden la evidencia**. Solo redactan respuestas a partir del contexto recuperado.
 
 ## 3. Conservadurismo ante incertidumbre
 
@@ -26,9 +26,7 @@ Si no existe evidencia clara en los documentos, el sistema **prefiere abstenerse
 
 El sistema puede degradar de forma determinística:
 
-```
 LLM remoto → LLM local → Baseline determinístico
-```
 
 sin cambiar el contrato de la API.
 
@@ -36,56 +34,109 @@ sin cambiar el contrato de la API.
 
 # Arquitectura
 
-Pipeline simplificado:
+Pipeline completo del sistema:
 
-```
 User Query
-   │
-   ▼
+│
+▼
 Query Wrapper
-   │
-   ▼
+│
+▼
 Hybrid Retrieval
 (BM25 + Dense Embeddings)
-   │
-   ▼
-Top-K Chunks
-   │
-   ▼
+│
+▼
+Top-10 Candidate Chunks
+│
+▼
+Cross-Encoder Reranker
+│
+▼
+Top-5 Chunks
+│
+▼
 Baseline Extractor / LLM Generator
-   │
-   ▼
+│
+▼
+Evidence Gate
+│
+▼
 Answer or Abstention
-```
-
-Componentes principales:
-
-* **BM25** para recuperación lexical robusta
-* **Dense embeddings** para similitud semántica
-* **Hybrid retriever** que combina ambos
-* **Baseline extractivo determinístico**
-* **LLM opcional para redacción**
 
 ---
 
-# Flujo de Consulta
+# Componentes Principales
 
-1. El usuario envía una pregunta en lenguaje natural.
+### BM25 Retriever
 
-2. El **Query Wrapper** selecciona el modo de operación.
+Recuperación lexical robusta basada en coincidencias de términos.
 
-3. El **Hybrid Retriever** recupera los fragmentos relevantes.
+Ventajas:
 
-4. El sistema decide:
+* alta precisión para consultas con términos exactos
+* robusto a dominios técnicos
 
-   * responder usando evidencia explícita
-   * o abstenerse si no existe evidencia suficiente.
+---
 
-5. La API devuelve:
+### Dense Retriever
 
-* respuesta
-* fragmentos recuperados
-* metadata de ejecución
+Recuperación semántica basada en embeddings.
+
+Ventajas:
+
+* captura similitud conceptual
+* mejora recall en preguntas parafraseadas
+
+---
+
+### Hybrid Retriever
+
+Combina BM25 y Dense Retrieval mediante fusión de scores.
+
+Beneficios:
+
+* robustez lexical
+* generalización semántica
+
+---
+
+### Cross-Encoder Reranker
+
+Un modelo cross-encoder reordena los fragmentos recuperados.
+
+Objetivo:
+
+* mejorar el orden de relevancia
+* eliminar ruido del top-k inicial
+
+Pipeline típico:
+
+Hybrid retrieval → top-10 candidatos → reranking → top-5 finales
+
+---
+
+### Baseline Extractor
+
+Modo determinístico que **extrae evidencia textual directamente**.
+
+Características:
+
+* cero consumo de tokens
+* completamente reproducible
+* latencia mínima
+
+---
+
+### Evidence Gate
+
+Antes de responder, el sistema valida:
+
+* score mínimo de recuperación
+* presencia explícita de evidencia
+* coincidencia léxica entre respuesta y contexto
+* ausencia de patrones meta o disclaimers
+
+Si las condiciones no se cumplen → **abstención**.
 
 ---
 
@@ -93,31 +144,25 @@ Componentes principales:
 
 ## Baseline (Default)
 
-Modo **determinístico y sin LLMs**.
+Modo determinístico sin LLMs.
 
-Retrieval
+Retrieval:
 
-```
-Hybrid Retriever
-BM25 + Dense Embeddings
-```
+Hybrid Retriever (BM25 + Dense)
 
-Generación
+Generación:
 
-```
-Extracción textual directa
-```
+Extracción textual directa.
 
 Ventajas:
 
-* cero consumo de tokens
 * determinístico
-* latencia muy baja
-* ideal para producción estable
+* cero costo de tokens
+* ideal para entornos productivos
 
-```
+Variable:
+
 RAG_MODE=baseline
-```
 
 ---
 
@@ -125,31 +170,25 @@ RAG_MODE=baseline
 
 Retrieval:
 
-```
 Hybrid Retriever
-```
 
 Generación:
 
-```
-LLM local vía Ollama
-```
+LLM local vía Ollama.
 
 Ejemplo de modelo:
 
-```
 qwen2.5:3b
-```
 
 Ventajas:
 
-* sin conocimiento externo
+* sin dependencia externa
+* totalmente controlado
 * grounded en documentos
-* control total del entorno
 
-```
+Variable:
+
 RAG_MODE=local
-```
 
 ---
 
@@ -157,54 +196,57 @@ RAG_MODE=local
 
 Retrieval:
 
-```
 Hybrid Retriever
-```
 
 Generación:
 
-```
 LLM remoto (ej: Gemini)
-```
 
 El sistema incluye **fallback automático al baseline**.
 
-```
+Variables:
+
 RAG_MODE=llm
 GOOGLE_API_KEY=your_api_key
-```
 
 ---
 
-# Transparencia y Grounding
+# Flujo de Consulta
 
-El sistema implementa múltiples mecanismos para evitar alucinaciones.
+1. El usuario envía una pregunta en lenguaje natural.
 
-## Gates Anti-Alucinación
+2. El Query Wrapper determina el modo de operación.
 
-El sistema valida:
+3. El Hybrid Retriever recupera los fragmentos relevantes.
 
-* score mínimo de retrieval
-* presencia explícita de evidencia textual
-* solapamiento léxico entre respuesta y contexto
-* bloqueo de respuestas meta o disclaimers
+4. El Reranker reordena los candidatos.
+
+5. El sistema genera respuesta o decide abstenerse.
+
+6. La API devuelve:
+
+* respuesta
+* fragmentos recuperados
+* metadata de ejecución
 
 ---
 
 # Metadata de Respuesta
 
-Cada respuesta incluye:
+Cada respuesta incluye información para auditoría:
 
-```
 {
-  "respuesta": "...",
-  "retrieved": [...],
-  "no_evidence": false,
-  "baseline_version": "robust_v5_2026-03-09"
+"respuesta": "...",
+"retrieved": [...],
+"no_evidence": false,
+"baseline_version": "robust_v5"
 }
-```
 
-Esto permite auditoría completa del sistema.
+Esto permite:
+
+* reproducibilidad
+* trazabilidad
+* debugging del sistema
 
 ---
 
@@ -212,29 +254,42 @@ Esto permite auditoría completa del sistema.
 
 Dataset:
 
-```
 eval/v1.jsonl
-```
 
 Contiene:
 
-```
 50 preguntas
 35 answerable
 15 unanswerable
-```
 
-Resultados actuales:
+---
 
-| Metric                 | Value |
-| ---------------------- | ----- |
-| Precision@5            | 0.029 |
-| Recall@5               | 0.147 |
-| Abstention Accuracy    | 0.93  |
-| False No Evidence Rate | 0.028 |
-| Average Latency        | 97 ms |
+# Resultados Experimentales
+
+| Metric              | Value  |
+| ------------------- | ------ |
+| Precision@5         | 0.029  |
+| Recall@5            | 0.147  |
+| Must Include Tokens | 0.676  |
+| Abstention Accuracy | 0.866  |
+| False No Evidence   | 0.028  |
+| Average Latency     | ~0.8 s |
 
 El sistema prioriza **abstención segura** sobre respuestas incorrectas.
+
+---
+
+# Experimental Findings
+
+Durante el desarrollo se realizaron múltiples experimentos.
+
+Hallazgos principales:
+
+* El reranking por sí solo no mejoró significativamente las métricas.
+* La mayor mejora provino del **ajuste del chunking de documentos**.
+* Reducir candidatos del reranker mejoró latencia sin degradar calidad.
+
+Esto refleja un comportamiento común en sistemas RAG donde **la calidad del chunking impacta más que el modelo generativo**.
 
 ---
 
@@ -243,8 +298,8 @@ El sistema prioriza **abstención segura** sobre respuestas incorrectas.
 Clonar repositorio
 
 ```
-git clone <repo-url>
-cd rag-riesgos
+ git clone <repo-url>
+ cd rag-riesgos
 ```
 
 ---
@@ -254,14 +309,14 @@ cd rag-riesgos
 Crear entorno
 
 ```
-python -m venv .venv
-source .venv/bin/activate
+ python -m venv .venv
+ source .venv/bin/activate
 ```
 
 Instalar dependencias
 
 ```
-pip install -r requirements.txt
+ pip install -r requirements.txt
 ```
 
 ---
@@ -269,20 +324,16 @@ pip install -r requirements.txt
 # Ejecutar Backend
 
 ```
-uvicorn backend.main:app --port 8000
+ uvicorn backend.main:app --port 8000
 ```
 
 Servidor disponible en:
 
-```
-http://localhost:8000
-```
+[http://localhost:8000](http://localhost:8000)
 
-Documentación API:
+Documentación automática:
 
-```
-http://localhost:8000/docs
-```
+[http://localhost:8000/docs](http://localhost:8000/docs)
 
 ---
 
@@ -290,27 +341,21 @@ http://localhost:8000/docs
 
 Request
 
-```
 POST /preguntar
-```
 
-```
 {
-  "texto": "¿Cuál es la prima mínima por embarque?",
-  "mode": "baseline"
+"texto": "¿Cuál es la prima mínima por embarque?",
+"mode": "baseline"
 }
-```
 
 Response
 
-```
 {
-  "respuesta": "...",
-  "retrieved": [...],
-  "no_evidence": false,
-  "baseline_version": "robust_v5_2026-03-09"
+"respuesta": "...",
+"retrieved": [...],
+"no_evidence": false,
+"baseline_version": "robust_v5"
 }
-```
 
 ---
 
@@ -319,7 +364,7 @@ Response
 Ejecutar benchmark:
 
 ```
-python eval/evaluate.py \
+ python eval/evaluate.py \
   --base_url http://127.0.0.1:8000 \
   --dataset eval/v1.jsonl \
   --modes baseline
@@ -328,36 +373,38 @@ python eval/evaluate.py \
 Resultados se guardan en:
 
 ```
-eval/runs/
+ eval/runs/
 ```
+
+Experimentos pueden registrarse con MLflow.
 
 ---
 
 # Estructura del Proyecto
 
-```
 backend/
-│
-├── main.py
-├── query_wrapper.py
-├── baseline_rag.py
-│
-├── retrievers/
-│   ├── bm25_retriever.py
-│   ├── dense_retriever.py
-│   └── hybrid_retriever.py
-│
-├── services/
-│
-├── pdf_loader.py
-├── config.py
-│
+
+main.py
+query_wrapper.py
+baseline_rag.py
+
+retrievers/
+
+bm25_retriever.py
+dense_retriever.py
+hybrid_retriever.py
+reranker.py
+
+services/
+
+pdf_loader.py
+config.py
+
 eval/
-scripts/
+
 data/
 
 README.md
-```
 
 ---
 
@@ -367,21 +414,18 @@ README.md
 
 * RAG baseline determinístico
 * Hybrid retrieval
+* Cross-encoder reranking
 * API FastAPI
 * evaluación automática
+* MLflow tracking
 * gates anti-alucinación
 
-## En progreso
-
-* evaluación comparativa entre modos
-* integración MLflow
-
-## Planificado
+## Futuro
 
 * RAGAS evaluation
-* reranking con cross-encoder
-* observabilidad
+* observabilidad avanzada
 * caching
+* optimización de retrieval
 
 ---
 
@@ -389,13 +433,13 @@ README.md
 
 * retrieval aún puede mejorar en recall
 * heurísticas conservadoras pueden descartar respuestas válidas
-* no hay razonamiento multi-documento avanzado
+* no existe razonamiento multi-documento complejo
 
 ---
 
 # Autor
 
-**Andrés García**
+Andrés García
 Computer Science
 Universidad Nacional de Colombia
 

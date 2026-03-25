@@ -9,13 +9,12 @@ from backend.local_rag import LocalRAG
 
 logger = logging.getLogger(__name__)
 
-# Mensaje estándar esperado por los tests
 NO_EVIDENCE_STD = "No encontré fragmentos relevantes para esa consulta en el documento."
 
 
 class ChatbotRiesgos:
     """
-    Wrapper que enruta consultas a baseline/local y normaliza la salida
+    Wrapper que enruta consultas a baseline/local/llm y normaliza la salida
     para mantener un contrato estable hacia FastAPI/tests/evaluación.
     """
 
@@ -58,27 +57,16 @@ class ChatbotRiesgos:
 
     def _resolve_mode(self, mode: Optional[str]) -> str:
         requested = (mode or self.mode or "local").lower().strip()
-        if requested in {"baseline", "local"}:
+        if requested in {"baseline", "local", "llm"}:
             return requested
         return "local"
 
     def _normalize_out(self, out: Dict[str, Any], *, requested_mode: str) -> Dict[str, Any]:
-        """
-        Asegura contrato estable:
-        - baseline_version siempre presente (si se conoce)
-        - no_evidence siempre bool
-        - retrieved siempre lista
-        - used_fallback siempre bool
-        - gate_reason siempre str|None
-        - requested_mode se reporta para debugging/evaluación
-        - unifica mensajes legacy de no-evidence al contrato estándar del proyecto
-        """
         if not isinstance(out, dict):
             out = {"respuesta": str(out)}
 
         out.setdefault("requested_mode", requested_mode)
         out.setdefault("baseline_version", self.baseline_version)
-
         out.setdefault("fuentes", [])
         out.setdefault("retrieved", [])
         out.setdefault("used_fallback", False)
@@ -115,6 +103,22 @@ class ChatbotRiesgos:
 
         return out
 
+    @staticmethod
+    def _lexical_coverage(pregunta: str, retrieved: list[Dict]) -> float:
+        """
+        Calcula qué fracción de los tokens clave de la pregunta
+        aparecen en el texto de los chunks recuperados.
+        """
+        context = " ".join(
+            c.get("text", c.get("content", "")).lower()
+            for c in retrieved
+        )
+        tokens = [t for t in pregunta.lower().split() if len(t) > 4]
+        if not tokens:
+            return 1.0
+        matched = sum(1 for t in tokens if t in context)
+        return matched / len(tokens)
+
     def consultar(
         self,
         pregunta: str,
@@ -127,6 +131,65 @@ class ChatbotRiesgos:
 
         if effective_mode == "baseline":
             out = self.baseline.ask(pregunta)
+
+        elif effective_mode == "llm":
+            try:
+                from backend.services.claude_generator import generate_answer
+
+                # Gate 1: baseline decide si hay evidencia
+                baseline_out = self.baseline.ask(pregunta)
+
+                if baseline_out.get("no_evidence"):
+                    out = baseline_out
+                    out["mode"] = "llm"
+                    out["gate_reason"] = baseline_out.get("gate_reason", "baseline_gate_no_evidence")
+                else:
+                    retrieved = baseline_out.get("retrieved", [])
+
+                    # Gate 2: cobertura léxica mínima
+                    coverage = self._lexical_coverage(pregunta, retrieved)
+                    if coverage < 0.4:
+                        out = {
+                            "respuesta": NO_EVIDENCE_STD,
+                            "no_evidence": True,
+                            "retrieved": retrieved,
+                            "gate_reason": f"lexical_gate_coverage_{coverage:.2f}",
+                            "used_fallback": False,
+                            "mode": "llm",
+                        }
+                    else:
+                        # Gate 3: Claude redacta y decide
+                        answer = generate_answer(pregunta, retrieved)
+
+                        if answer is None:
+                            # ← fix: Claude abstiene = no_evidence, no usar baseline_out
+                            out = {
+                                "respuesta": NO_EVIDENCE_STD,
+                                "no_evidence": True,
+                                "retrieved": retrieved,
+                                "fuentes": [],
+                                "used_fallback": False,
+                                "gate_reason": "claude_abstention",
+                                "mode": "llm",
+                            }
+                        else:
+                            out = {
+                                "respuesta": answer,
+                                "no_evidence": False,
+                                "retrieved": retrieved,
+                                "fuentes": retrieved,
+                                "used_fallback": False,
+                                "gate_reason": None,
+                                "mode": "llm",
+                                "model": "claude-sonnet-4-5",
+                            }
+
+            except Exception as e:
+                logger.warning("⚠️ Claude falló, degradando a baseline: %s", e)
+                out = self.baseline.ask(pregunta)
+                out["used_fallback"] = True
+                out["gate_reason"] = f"llm_fallback: {e}"
+
         else:
             out = self.local.ask(pregunta)
 

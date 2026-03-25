@@ -26,7 +26,7 @@ export default function App() {
 
   const badge = useMemo(() => {
     if (mode === "baseline") return { text: "Baseline (sin tokens)", tone: "ok" };
-    if (mode === "llm") return { text: "LLM (Gemini + Chroma)", tone: "warn" };
+    if (mode === "llm") return { text: "LLM (Claude Sonnet)", tone: "warn" };
     if (!mode) return null;
     return { text: `Modo: ${mode}`, tone: "neutral" };
   }, [mode]);
