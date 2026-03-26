@@ -1,450 +1,303 @@
 # RAG Risk Analysis System
 
+> **Demo:** https://rag-riesgos.vercel.app  
+> **API:** https://rag-riesgos-backend-2.onrender.com/docs
+
 Sistema de consulta inteligente sobre documentos de análisis de riesgos basado en **Retrieval-Augmented Generation (RAG)** con una arquitectura **baseline-first**, **grounded** y **reproducible**.
 
-El proyecto está diseñado con foco en **ingeniería de sistemas de IA en producción**, priorizando control, trazabilidad y degradación segura por encima de la dependencia total de modelos generativos.
+El proyecto está diseñado con foco en **ingeniería de sistemas de IA en producción**, priorizando control, trazabilidad y degradación segura por encima de la dependencia de modelos generativos.
 
 ---
 
-# Principios de Diseño
+## Principios de Diseño
 
-El sistema sigue una filosofía conservadora para evitar alucinaciones.
+**1. Independencia de LLMs** — el sistema no depende de modelos generativos para funcionar. Existe un modo determinístico completamente extractivo.
 
-## 1. Independencia de LLMs
+**2. LLMs como redactores** — cuando se utilizan LLMs, estos no deciden la evidencia. Solo redactan respuestas a partir del contexto recuperado.
 
-El sistema **no depende de modelos generativos para funcionar**. Existe un modo determinístico completamente extractivo.
+**3. Conservadurismo ante incertidumbre** — si no existe evidencia clara en los documentos, el sistema prefiere abstenerse de responder.
 
-## 2. LLMs como redactores
+**4. Degradación segura** — el sistema puede degradar de forma determinística sin cambiar el contrato de la API:
 
-Cuando se utilizan LLMs, estos **no deciden la evidencia**. Solo redactan respuestas a partir del contexto recuperado.
-
-## 3. Conservadurismo ante incertidumbre
-
-Si no existe evidencia clara en los documentos, el sistema **prefiere abstenerse de responder**.
-
-## 4. Degradación segura
-
-El sistema puede degradar de forma determinística:
-
-LLM remoto → LLM local → Baseline determinístico
-
-sin cambiar el contrato de la API.
+```
+LLM remoto → Baseline determinístico
+```
 
 ---
 
-# Arquitectura
+## Arquitectura
 
-Pipeline completo del sistema:
-
+```
 User Query
-│
-▼
+   │
+   ▼
 Query Wrapper
-│
-▼
+   │
+   ▼
 Hybrid Retrieval
 (BM25 + Dense Embeddings)
-│
-▼
+   │
+   ▼
 Top-10 Candidate Chunks
-│
-▼
+   │
+   ▼
 Cross-Encoder Reranker
-│
-▼
+   │
+   ▼
 Top-5 Chunks
-│
-▼
-Baseline Extractor / LLM Generator
-│
-▼
-Evidence Gate
-│
-▼
+   │
+   ▼
+Baseline Gate (no_evidence check)
+   │
+   ├── no_evidence=True → Abstención
+   │
+   ▼
+Baseline Extractor / LLM Generator (Claude)
+   │
+   ▼
+Evidence Gate (lexical + abstention check)
+   │
+   ▼
 Answer or Abstention
+```
+
+### Componentes principales
+
+**BM25 Retriever** — recuperación lexical robusta, alta precisión para consultas con términos exactos, robusto a dominios técnicos.
+
+**Dense Retriever** — recuperación semántica basada en embeddings, captura similitud conceptual y mejora recall en preguntas parafraseadas.
+
+**Hybrid Retriever** — combina BM25 y Dense Retrieval mediante fusión de scores, balanceando robustez lexical y generalización semántica.
+
+**Cross-Encoder Reranker** — reordena los fragmentos recuperados para mejorar el orden de relevancia y eliminar ruido del top-k inicial.
+
+**Baseline Extractor** — modo determinístico que extrae evidencia textual directamente, con cero consumo de tokens y latencia mínima.
+
+**Evidence Gate** — antes de responder valida score mínimo de recuperación, presencia explícita de evidencia, cobertura léxica entre pregunta y contexto, y ausencia de patrones meta. Si las condiciones no se cumplen → abstención.
 
 ---
 
-# Componentes Principales
+## Modos de Operación
 
-### BM25 Retriever
+### Baseline (default)
 
-Recuperación lexical robusta basada en coincidencias de términos.
+Modo determinístico sin LLMs. Extracción textual directa sobre los chunks recuperados.
 
-Ventajas:
-
-* alta precisión para consultas con términos exactos
-* robusto a dominios técnicos
-
----
-
-### Dense Retriever
-
-Recuperación semántica basada en embeddings.
-
-Ventajas:
-
-* captura similitud conceptual
-* mejora recall en preguntas parafraseadas
-
----
-
-### Hybrid Retriever
-
-Combina BM25 y Dense Retrieval mediante fusión de scores.
-
-Beneficios:
-
-* robustez lexical
-* generalización semántica
-
----
-
-### Cross-Encoder Reranker
-
-Un modelo cross-encoder reordena los fragmentos recuperados.
-
-Objetivo:
-
-* mejorar el orden de relevancia
-* eliminar ruido del top-k inicial
-
-Pipeline típico:
-
-Hybrid retrieval → top-10 candidatos → reranking → top-5 finales
-
----
-
-### Baseline Extractor
-
-Modo determinístico que **extrae evidencia textual directamente**.
-
-Características:
-
-* cero consumo de tokens
-* completamente reproducible
-* latencia mínima
-
----
-
-### Evidence Gate
-
-Antes de responder, el sistema valida:
-
-* score mínimo de recuperación
-* presencia explícita de evidencia
-* coincidencia léxica entre respuesta y contexto
-* ausencia de patrones meta o disclaimers
-
-Si las condiciones no se cumplen → **abstención**.
-
----
-
-# Modos de Operación
-
-## Baseline (Default)
-
-Modo determinístico sin LLMs.
-
-Retrieval:
-
-Hybrid Retriever (BM25 + Dense)
-
-Generación:
-
-Extracción textual directa.
-
-Ventajas:
-
-* determinístico
-* cero costo de tokens
-* ideal para entornos productivos
-
-Variable:
-
+```bash
 RAG_MODE=baseline
+```
 
----
+Ventajas: determinístico, cero costo de tokens, latencia muy baja, ideal para producción estable.
 
-## Local Mode
+### LLM — Claude (recomendado)
 
-Retrieval:
+Retrieval híbrido + Claude Sonnet como redactor. El baseline actúa como gate: si no hay evidencia, Claude no es invocado.
 
-Hybrid Retriever
-
-Generación:
-
-LLM local vía Ollama.
-
-Ejemplo de modelo:
-
-qwen2.5:3b
-
-Ventajas:
-
-* sin dependencia externa
-* totalmente controlado
-* grounded en documentos
-
-Variable:
-
-RAG_MODE=local
-
----
-
-## Remote LLM Mode (Opcional)
-
-Retrieval:
-
-Hybrid Retriever
-
-Generación:
-
-LLM remoto (ej: Gemini)
-
-El sistema incluye **fallback automático al baseline**.
-
-Variables:
-
+```bash
 RAG_MODE=llm
-GOOGLE_API_KEY=your_api_key
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Ventajas: respuestas en lenguaje natural, fallback automático al baseline ante errores, abstention accuracy 1.0 con gates configurados.
+
+### Local
+
+Retrieval híbrido + LLM local vía Ollama (ej. `qwen2.5:3b`). Sin dependencia externa, totalmente controlado.
+
+```bash
+RAG_MODE=local
+```
 
 ---
 
-# Flujo de Consulta
+## Gates Anti-Alucinación (modo LLM)
 
-1. El usuario envía una pregunta en lenguaje natural.
+El modo LLM aplica tres gates en secuencia:
 
-2. El Query Wrapper determina el modo de operación.
+**Gate 1 — Baseline:** si el baseline retorna `no_evidence=True`, Claude no es invocado. Se reutilizan los gates extractivos del modo determinístico (patrones de email, teléfono, preguntas vagas, etc.).
 
-3. El Hybrid Retriever recupera los fragmentos relevantes.
+**Gate 2 — Cobertura léxica:** si menos del 40% de los tokens clave de la pregunta aparecen en los chunks recuperados, se abstiene sin llamar a Claude.
 
-4. El Reranker reordena los candidatos.
-
-5. El sistema genera respuesta o decide abstenerse.
-
-6. La API devuelve:
-
-* respuesta
-* fragmentos recuperados
-* metadata de ejecución
+**Gate 3 — Claude:** Claude puede retornar `NO_EVIDENCE` explícitamente. Si lo hace, la respuesta final es abstención.
 
 ---
 
-# Metadata de Respuesta
+## Evaluación
 
-Cada respuesta incluye información para auditoría:
+Dataset: `eval/v1.jsonl` — 50 preguntas (35 answerable, 15 unanswerable).
 
+### Resultados comparativos
+
+| Métrica               | Baseline | Claude (llm) |
+|-----------------------|----------|--------------|
+| Precision@5           | 0.029    | 0.029        |
+| Recall@5              | 0.147    | 0.147        |
+| Token hit rate        | 0.810    | 0.724        |
+| All tokens hit        | 0.735    | 0.676        |
+| Abstention accuracy   | 0.867    | **1.000**    |
+| False no-evidence     | 0.029    | 0.171        |
+| Latencia avg          | 451 ms   | 2 718 ms     |
+
+El modo LLM prioriza **cero alucinaciones** sobre cobertura de respuesta. El trade-off es mayor false no-evidence rate — el sistema se abstiene en más preguntas answerable para garantizar que nunca responde incorrectamente en preguntas unanswerable.
+
+---
+
+## Quick Start
+
+```bash
+git clone <repo-url>
+cd rag-riesgos
+
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Configura el `.env`:
+
+```bash
+RAG_MODE=llm
+ANTHROPIC_API_KEY=sk-ant-...
+PDF_PATH=data/Doc chatbot.pdf
+```
+
+Levanta el backend:
+
+```bash
+uvicorn backend.main:app --port 8000
+```
+
+Levanta el frontend:
+
+```bash
+cd frontend && npm install && npm start
+```
+
+Backend disponible en `http://localhost:8000` — documentación automática en `http://localhost:8000/docs`.  
+Frontend disponible en `http://localhost:3000`.
+
+---
+
+## Ejemplo de Consulta
+
+```bash
+curl -X POST https://rag-riesgos-backend-2.onrender.com/preguntar \
+  -H "Content-Type: application/json" \
+  -d '{"texto": "¿Cuál es la prima mínima por embarque?", "mode": "llm"}'
+```
+
+Respuesta:
+
+```json
 {
-"respuesta": "...",
-"retrieved": [...],
-"no_evidence": false,
-"baseline_version": "robust_v5"
+  "respuesta": "La prima mínima por embarque es de USD 12.-",
+  "retrieved": [...],
+  "no_evidence": false,
+  "mode": "llm",
+  "model": "claude-sonnet-4-5",
+  "gate_reason": null,
+  "baseline_version": "robust_v5_2026-03-09"
 }
-
-Esto permite:
-
-* reproducibilidad
-* trazabilidad
-* debugging del sistema
-
----
-
-# Evaluación
-
-Dataset:
-
-eval/v1.jsonl
-
-Contiene:
-
-50 preguntas
-35 answerable
-15 unanswerable
-
----
-
-# Resultados Experimentales
-
-| Metric              | Value  |
-| ------------------- | ------ |
-| Precision@5         | 0.029  |
-| Recall@5            | 0.147  |
-| Must Include Tokens | 0.676  |
-| Abstention Accuracy | 0.866  |
-| False No Evidence   | 0.028  |
-| Average Latency     | ~0.8 s |
-
-El sistema prioriza **abstención segura** sobre respuestas incorrectas.
-
----
-
-# Experimental Findings
-
-Durante el desarrollo se realizaron múltiples experimentos.
-
-Hallazgos principales:
-
-* El reranking por sí solo no mejoró significativamente las métricas.
-* La mayor mejora provino del **ajuste del chunking de documentos**.
-* Reducir candidatos del reranker mejoró latencia sin degradar calidad.
-
-Esto refleja un comportamiento común en sistemas RAG donde **la calidad del chunking impacta más que el modelo generativo**.
-
----
-
-# Quick Start
-
-Clonar repositorio
-
-```
- git clone <repo-url>
- cd rag-riesgos
 ```
 
 ---
 
-# Instalación
+## Evaluación Automática
 
-Crear entorno
-
-```
- python -m venv .venv
- source .venv/bin/activate
-```
-
-Instalar dependencias
-
-```
- pip install -r requirements.txt
-```
-
----
-
-# Ejecutar Backend
-
-```
- uvicorn backend.main:app --port 8000
-```
-
-Servidor disponible en:
-
-[http://localhost:8000](http://localhost:8000)
-
-Documentación automática:
-
-[http://localhost:8000/docs](http://localhost:8000/docs)
-
----
-
-# Ejemplo de Consulta
-
-Request
-
-POST /preguntar
-
-{
-"texto": "¿Cuál es la prima mínima por embarque?",
-"mode": "baseline"
-}
-
-Response
-
-{
-"respuesta": "...",
-"retrieved": [...],
-"no_evidence": false,
-"baseline_version": "robust_v5"
-}
-
----
-
-# Evaluación Automática
-
-Ejecutar benchmark:
-
-```
- python eval/evaluate.py \
+```bash
+# Baseline
+python eval/evaluate.py \
   --base_url http://127.0.0.1:8000 \
   --dataset eval/v1.jsonl \
   --modes baseline
+
+# Claude
+python eval/evaluate.py \
+  --base_url http://127.0.0.1:8000 \
+  --dataset eval/v1.jsonl \
+  --modes llm \
+  --timeout_s 120
 ```
 
-Resultados se guardan en:
-
-```
- eval/runs/
-```
-
-Experimentos pueden registrarse con MLflow.
+Resultados guardados en `eval/runs/`. Experimentos registrados con MLflow en `mlruns/`.
 
 ---
 
-# Estructura del Proyecto
+## Estructura del Proyecto
 
+```
 backend/
-
-main.py
-query_wrapper.py
-baseline_rag.py
-
-retrievers/
-
-bm25_retriever.py
-dense_retriever.py
-hybrid_retriever.py
-reranker.py
-
-services/
-
-pdf_loader.py
-config.py
+├── main.py
+├── query_wrapper.py
+├── baseline_rag.py
+├── local_rag.py
+├── retrievers/
+│   ├── bm25_retriever.py
+│   ├── dense_retriever.py
+│   ├── hybrid_retriever.py
+│   └── reranker.py
+├── services/
+│   └── claude_generator.py
+├── pdf_loader.py
+└── config.py
 
 eval/
+├── v1.jsonl
+├── evaluate.py
+└── runs/
+
+frontend/
+└── src/
 
 data/
-
-README.md
-
----
-
-# Roadmap
-
-## Completado
-
-* RAG baseline determinístico
-* Hybrid retrieval
-* Cross-encoder reranking
-* API FastAPI
-* evaluación automática
-* MLflow tracking
-* gates anti-alucinación
-
-## Futuro
-
-* RAGAS evaluation
-* observabilidad avanzada
-* caching
-* optimización de retrieval
+mlruns/
+```
 
 ---
 
-# Limitaciones Conocidas
+## Despliegue
 
-* retrieval aún puede mejorar en recall
-* heurísticas conservadoras pueden descartar respuestas válidas
-* no existe razonamiento multi-documento complejo
-
----
-
-# Autor
-
-Andrés García
-Computer Science
-Universidad Nacional de Colombia
+| Servicio | Plataforma | URL |
+|----------|------------|-----|
+| Backend  | Render     | https://rag-riesgos-backend-2.onrender.com |
+| Frontend | Vercel     | https://rag-riesgos.vercel.app |
 
 ---
 
-# Licencia
+## Roadmap
+
+**Completado**
+- RAG baseline determinístico
+- Hybrid retrieval (BM25 + Dense)
+- Cross-encoder reranking
+- API FastAPI con contrato estable
+- Evaluación automática (50 preguntas)
+- MLflow tracking
+- Gates anti-alucinación (3 niveles)
+- Integración Claude Sonnet (modo LLM)
+- Frontend React con selector de modo
+- Despliegue en Render + Vercel
+
+**Futuro**
+- RAGAS evaluation (faithfulness, answer relevancy)
+- Observabilidad avanzada
+- Caching de embeddings
+- Optimización de recall en retrieval
+
+---
+
+## Limitaciones Conocidas
+
+- Retrieval aún puede mejorar en recall (Precision@5 = 0.029).
+- El modo LLM con gates conservadores tiene false no-evidence rate elevado (0.171).
+- No existe razonamiento multi-documento complejo.
+
+---
+
+## Autor
+
+Andrés García — Computer Science, Universidad Nacional de Colombia
+
+## Licencia
 
 MIT
